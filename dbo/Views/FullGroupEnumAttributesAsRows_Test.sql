@@ -1,0 +1,29 @@
+﻿
+--CREATE VIEW [dbo].[FullGroupEnumAttributesAsRows_Test]
+--AS
+--SELECT dbo.Country.CountryISO2A
+--	,dbo.Collective.Sequence AS GroupId
+--	,dbo.Collective.Sequence AS [Group] --PF added to provide compatibility to other views
+--	,dbo.Attribute.[Key]
+--	,CAST(TYPETERM.Value AS NVARCHAR(255)) AS Attribute
+--	,dbo.EnumDefinition.Value
+--	,CAST(tt1.Value AS NVARCHAR(255)) AS ValueDesc
+--	,CAST(tt1.Value AS NVARCHAR(255)) AS [Description] --PF added to provide compatibility to other views
+--	,dbo.AttributeValue.GPSUser
+--	,dbo.AttributeValue.CreationTimeStamp
+--	,dbo.AttributeValue.GPSUpdateTimestamp
+--	,t.KeyName
+--FROM dbo.Attribute
+--INNER JOIN dbo.AttributeScope ON dbo.Attribute.Scope_Id = dbo.AttributeScope.GUIDReference
+--INNER JOIN dbo.AttributeValue ON dbo.Attribute.GUIDReference = dbo.AttributeValue.DemographicId
+--INNER JOIN dbo.Collective ON dbo.AttributeValue.CandidateId = dbo.Collective.GUIDReference
+----INNER JOIN dbo.Candidate ON dbo.Collective.GUIDReference = dbo.Candidate.GUIDReference 
+--INNER JOIN dbo.Country ON dbo.Attribute.Country_Id = dbo.Country.CountryId
+--INNER JOIN dbo.EnumAttributeValue ON dbo.AttributeValue.GUIDReference = dbo.EnumAttributeValue.GUIDReference
+--INNER JOIN dbo.EnumDefinition ON dbo.EnumAttributeValue.Value_Id = dbo.EnumDefinition.Id
+--INNER JOIN dbo.Translation t ON dbo.EnumDefinition.Translation_Id = t.TranslationId
+--LEFT JOIN dbo.TranslationTerm tt1 ON t.TranslationId = tt1.Translation_Id
+--	AND tt1.CultureCode = 2057
+--INNER JOIN dbo.Translation AS TYPETRANS ON TYPETRANS.TranslationId = dbo.Attribute.Translation_Id
+--LEFT JOIN dbo.TranslationTerm TYPETERM ON TYPETRANS.TranslationId = TYPETERM.Translation_Id
+--	AND TYPETERM.CultureCode = 2057

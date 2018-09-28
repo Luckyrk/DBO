@@ -1,0 +1,10 @@
+﻿CREATE TABLE EReceiptEmailStatus
+(
+	Id INT,
+	NAME NVARCHAR(200),
+	CreatedDateTime DATETIME,
+	CreatedBy NVARCHAR(2000) NOT NULL,
+	UpdatedDateTime DATETIME  NULL,
+	UpdatedBy NVARCHAR(2000) NULL,
+	CountryId UNIQUEIDENTIFIER NULL
+)

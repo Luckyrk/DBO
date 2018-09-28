@@ -1,0 +1,25 @@
+﻿CREATE TABLE [dbo].[UK_StateDefinitionHistory_Reinstatement_Dropouts]
+(
+	[GUIDReference] [uniqueidentifier] NOT NULL,
+	[GPSUser] [nvarchar](50) NOT NULL,
+	[CreationDate] [datetime] NOT NULL,
+	[GPSUpdateTimestamp] [datetime] NOT NULL,
+	[CreationTimeStamp] [datetime] NULL,
+	[Comments] [nvarchar](500) NULL,
+	[CollaborateInFuture] [bit] NOT NULL,
+	[From_Id] [uniqueidentifier] NOT NULL,
+	[To_Id] [uniqueidentifier] NOT NULL,
+	[ReasonForchangeState_Id] [uniqueidentifier] NULL,
+	[Country_Id] [uniqueidentifier] NOT NULL,
+	[Candidate_Id] [uniqueidentifier] NULL,
+	[Belonging_Id] [uniqueidentifier] NULL,
+	[Panelist_Id] [uniqueidentifier] NULL,
+	[GroupMembership_Id] [uniqueidentifier] NULL,
+	[Action_Id] [uniqueidentifier] NULL,
+	[Order_Country_Id] [uniqueidentifier] NULL,
+	[Package_Id] [uniqueidentifier] NULL,
+	[ImportFile_Id] [uniqueidentifier] NULL,
+	[ImportFilePendingRecord_Id] [uniqueidentifier] NULL,
+	[Order_Id] [bigint] NULL,
+	ReinstatementDateTime DATETIME
+)

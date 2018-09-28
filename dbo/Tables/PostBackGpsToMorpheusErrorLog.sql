@@ -1,0 +1,8 @@
+﻿CREATE TABLE PostBackGpsToMorpheusErrorLog
+(
+ Id UNIQUEIDENTIFIER DEFAULT NEWID(),
+ PostBackToMorpheusMessageId UNIQUEIDENTIFIER,
+ MessageBody NVARCHAR(MAX),
+ ERRORMESSAGE NVARCHAR(MAX),
+ CreationTimeStamp  DATETIME
+)

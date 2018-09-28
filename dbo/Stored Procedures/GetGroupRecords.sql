@@ -1,0 +1,484 @@
+﻿--CREATE PROCEDURE [dbo].[GetGroupRecords] (
+--	@pCountryId UNIQUEIDENTIFIER
+--	,@pCultureCode INT
+--	,@pOrderBy VARCHAR(100)
+--	,@pOrderType VARCHAR(10) -- ASC OR DESC    
+--	,@pPageNumber INT = 1
+--	,@pPageSize INT = 100
+--	,@pIsExport BIT = 0
+--	,@pParametersTable dbo.GridParametersTable readonly
+--	)
+--AS
+--BEGIN
+--	SET NOCOUNT ON
+
+--	SELECT TypeTranslation_Id
+--		,dbo.GetTranslationValue(TypeTranslation_Id, @pCultureCode) AS GroupType
+--	INTO #TEMPTypeTranslation
+--	FROM (
+--		SELECT DISTINCT TypeTranslation_Id
+--		FROM Collective
+--		WHERE CountryId = @pCountryId
+--		) AS TT
+
+--	DECLARE @op1 VARCHAR(50)
+--		,@op2 VARCHAR(50)
+--		,@op3 VARCHAR(50)
+--	DECLARE @GroupContactName NVARCHAR(400)
+--		,@BusinessId NVARCHAR(50)
+--		,@GroupType NVARCHAR(400)
+
+--		DECLARE @countryDigits INT
+--		SELECT @countryDigits=cc.GroupBusinessIdDigits
+--	FROM CountryConfiguration CC
+--	INNER JOIN Country C ON C.Configuration_Id = CC.Id
+--	WHERE C.CountryId = @pCountryId
+
+	
+--	SELECT @op1=Opertor,@GroupContactName=ParameterValue FROM @pParametersTable WHERE ParameterName='GroupContactName'
+	
+--	SELECT @op2 = Opertor
+--		,@BusinessId = ParameterValue
+--	FROM @pParametersTable
+--	WHERE ParameterName = 'BusinessId'
+
+--	IF (@BusinessId LIKE '%[^0-9]%')
+--	BEGIN
+--		SET @BusinessId = 0
+--	END
+
+--	SELECT @op3 = Opertor
+--		,@GroupType = ParameterValue
+--	FROM @pParametersTable
+--	WHERE ParameterName = 'GroupType'
+
+--	--GroupContactName
+--	--BusinessId
+--	--GroupType
+--	IF (@pOrderBy IS NULL)
+--		SET @pOrderBy = 'DESC'
+
+--	IF (@pOrderType IS NULL)
+--		SET @pOrderType = 'CreationTimeStamp'
+
+--	DECLARE @OFFSETRows INT = 0
+--	DECLARE @IsLessThan VARCHAR(50) = 'IsLessThan'
+--		,@IsLessThanOrEqualTo VARCHAR(50) = 'IsLessThanOrEqualTo'
+--		,@IsEqualTo VARCHAR(50) = 'IsEqualTo'
+--		,@IsNotEqualTo VARCHAR(50) = 'IsNotEqualTo'
+--		,@IsGreaterThanOrEqualTo VARCHAR(50) = 'IsGreaterThanOrEqualTo'
+--		,@IsGreaterThan VARCHAR(50) = 'IsGreaterThan'
+--		,@StartsWith VARCHAR(50) = 'StartsWith'
+--		,@EndsWith VARCHAR(50) = 'EndsWith'
+--		,@Contains VARCHAR(50) = 'Contains'
+--		,@IsContainedIn VARCHAR(50) = 'IsContainedIn'
+--		,@DoesNotContain VARCHAR(50) = 'DoesNotContain'
+
+--	DECLARE @FirstNameVisible BIT=1;
+--	DECLARE @MidNameVisible BIT=1;
+--	DECLARE @LastNameVisible BIT=1;
+
+	
+--	SELECT @FirstNameVisible = Visible FROM fieldconfiguration fc
+--	JOIN Country c on c.configuration_id=fc.countryconfiguration_id
+--	WHERE c.countryid=@pCountryId AND [key] = 'FirstName'
+
+--	SELECT @MidNameVisible = Visible FROM fieldconfiguration fc
+--	JOIN Country c on c.configuration_id=fc.countryconfiguration_id
+--	WHERE c.countryid=@pCountryId AND [key] = 'MiddleName'
+
+--	SELECT @LastNameVisible = Visible FROM fieldconfiguration fc
+--	JOIN Country c on c.configuration_id=fc.countryconfiguration_id
+--	WHERE c.countryid=@pCountryId AND [key] = 'LastName'
+
+--	IF (@pIsExport = 0)
+--		SET @OFFSETRows = (@pPageSize * (@pPageNumber - 1))
+--	ELSE
+--		SET @pPageSize = 15000
+
+--	IF (@pIsExport = 0)
+--	BEGIN
+--		SELECT Count(0) AS TotalNoOfRecords
+--		FROM (
+--			SELECT C.CreationTimeStamp
+--				,C.GUIDReference
+--				,CASE 
+--					WHEN TB.[Type] = 'FinalTransitionBehavior'
+--						THEN 1
+--					ELSE 0
+--					END AS IsLastState
+--				--,dbo.GetGroupSequence(C.Sequence, C.CountryId) AS BusinessId
+--				,CASE
+--			WHEN len(C.Sequence)> @countryDigits THEN C.Sequence
+--			ELSE CAST(REPLICATE('0', @countryDigits - LEN(C.Sequence)) AS NVARCHAR) + CAST(C.Sequence AS NVARCHAR)
+--			END AS BusinessId
+--				,TType.GroupType AS GroupType
+--				,I.IndividualId
+--				,IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.LastOrderedName) AS LastOrderedName
+--				,IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.MiddleOrderedName) AS MiddleOrderedName
+--				,IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.FirstOrderedName) AS FirstOrderedName
+--				,CONCAT(
+--					IIF(@FirstNameVisible=1, IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.FirstOrderedName),''), ' ', 
+--					IIF(@MidNameVisible=1, IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.MiddleOrderedName),''), ' ', 
+--					IIF(@LastNameVisible=1, IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.LastOrderedName),'')
+--					) as GroupContactName
+--			FROM PersonalIdentification P
+--			INNER JOIN Individual I ON P.PersonalIdentificationId = I.PersonalIdentificationId
+--			INNER JOIN Collective C ON C.GroupContact_Id = I.GUIDReference
+--			INNER JOIN #TEMPTypeTranslation TType ON C.TypeTranslation_Id = TType.TypeTranslation_Id
+--			INNER JOIN Candidate Can ON Can.GUIDReference = C.GUIDReference
+--			INNER JOIN StateDefinition SD ON Can.CandidateStatus = SD.Id
+--			INNER JOIN TransitionBehavior TB ON SD.StateDefinitionBehavior_Id = TB.GUIDReference
+--			WHERE C.CountryId = @pCountryId
+--			) AS TEMPTABLE
+--		WHERE
+--				(  
+--					(@op1 IS NULL)
+--					OR (@op1=@IsEqualTo AND					GroupContactName = @GroupContactName )
+--					OR (@op1=@IsNotEqualTo AND				GroupContactName <> @GroupContactName)
+--					OR (@op1=@IsLessThan AND				GroupContactName < @GroupContactName)
+--					OR (@op1=@IsLessThanOrEqualTo AND		GroupContactName <= @GroupContactName )
+--					OR (@op1=@IsGreaterThan AND				GroupContactName > @GroupContactName)
+--					OR (@op1=@IsGreaterThanOrEqualTo AND	GroupContactName >= @GroupContactName)
+--					OR (@op1=@Contains AND					GroupContactName LIKE '%'+@GroupContactName+'%')
+--					OR (@op1=@DoesNotContain AND			GroupContactName NOT LIKE '%'+@GroupContactName+'%')
+--					OR (@op1=@StartsWith AND				GroupContactName LIKE ''+@GroupContactName+'%')
+--					OR (@op1=@EndsWith AND					GroupContactName LIKE '%'+@GroupContactName+'' )	
+--					)
+--					AND
+--			(
+--				(@op2 IS NULL)
+--				OR (
+--					@op2 = @IsEqualTo
+--					AND BusinessId = @BusinessId
+--					)
+--				OR (
+--					@op2 = @IsNotEqualTo
+--					AND BusinessId <> @BusinessId
+--					)
+--				OR (
+--					@op2 = @IsLessThan
+--					AND BusinessId < @BusinessId
+--					)
+--				OR (
+--					@op2 = @IsLessThanOrEqualTo
+--					AND BusinessId <= @BusinessId
+--					)
+--				OR (
+--					@op2 = @IsGreaterThan
+--					AND BusinessId > @BusinessId
+--					)
+--				OR (
+--					@op2 = @IsGreaterThanOrEqualTo
+--					AND BusinessId >= @BusinessId
+--					)
+--				OR (
+--					@op2 = @Contains
+--					AND BusinessId LIKE '%' + @BusinessId + '%'
+--					)
+--				OR (
+--					@op2 = @DoesNotContain
+--					AND BusinessId NOT LIKE '%' + @BusinessId + '%'
+--					)
+--				OR (
+--					@op2 = @StartsWith
+--					AND BusinessId LIKE '' + @BusinessId + '%'
+--					)
+--				OR (
+--					@op2 = @EndsWith
+--					AND BusinessId LIKE '%' + @BusinessId + ''
+--					)
+--				)
+--			AND (
+--				(@op3 IS NULL)
+--				OR (
+--					@op3 = @IsEqualTo
+--					AND GroupType = @GroupType
+--					)
+--				OR (
+--					@op3 = @IsNotEqualTo
+--					AND GroupType <> @GroupType
+--					)
+--				OR (
+--					@op3 = @IsLessThan
+--					AND GroupType < @GroupType
+--					)
+--				OR (
+--					@op3 = @IsLessThanOrEqualTo
+--					AND GroupType <= @GroupType
+--					)
+--				OR (
+--					@op3 = @IsGreaterThan
+--					AND GroupType > @GroupType
+--					)
+--				OR (
+--					@op3 = @IsGreaterThanOrEqualTo
+--					AND GroupType >= @GroupType
+--					)
+--				OR (
+--					@op3 = @Contains
+--					AND GroupType LIKE '%' + @GroupType + '%'
+--					)
+--				OR (
+--					@op3 = @DoesNotContain
+--					AND GroupType NOT LIKE '%' + @GroupType + '%'
+--					)
+--				OR (
+--					@op3 = @StartsWith
+--					AND GroupType LIKE '' + @GroupType + '%'
+--					)
+--				OR (
+--					@op3 = @EndsWith
+--					AND GroupType LIKE '%' + @GroupType + ''
+--					)
+--				)
+	
+--	END
+
+--	IF OBJECT_ID('tempdb..#TempGroup') IS NOT NULL
+--	BEGIN
+--		DROP TABLE #TempGroup
+--	END
+
+--	CREATE TABLE #TempGroup (
+--		RowNo INT identity(1, 1)
+--		,CreationTimeStamp DATETIME
+--		,Id UNIQUEIDENTIFIER
+--		,IsLastState BIT
+--		,BusinessId VARCHAR(50)
+--		,GroupType NVARCHAR(100)
+--		,GroupContactId NVARCHAR(60)
+--		,FirstName NVARCHAR(200)
+--		,MiddleName NVARCHAR(200)
+--		,LastName NVARCHAR(200)
+--		,GroupContactName NVARCHAR(600)
+--		)
+
+--	INSERT INTO #TempGroup
+--	SELECT CreationTimeStamp
+--		,GUIDReference
+--		,IsLastState
+--		,BusinessId
+--		,GroupType
+--		,IndividualId
+--		,FirstOrderedName
+--		,MiddleOrderedName
+--		,LastOrderedName
+--		,GroupContactName
+--	FROM (
+--		SELECT C.CreationTimeStamp
+--			,C.GUIDReference
+--			,CASE 
+--				WHEN TB.[Type] = 'FinalTransitionBehavior'
+--					THEN 1
+--				ELSE 0
+--				END AS IsLastState
+--			,CASE
+--			WHEN len(C.Sequence)> @countryDigits THEN CAST(C.Sequence AS NVARCHAR)
+--			ELSE CAST(REPLICATE('0', @countryDigits - LEN(C.Sequence)) AS NVARCHAR) + CAST(C.Sequence AS NVARCHAR)
+--			END AS BusinessId
+--			--,C.Sequence AS BusinessId
+--			,TType.GroupType AS GroupType
+--			,I.IndividualId
+--			,IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.LastOrderedName) AS LastOrderedName
+--			,IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.MiddleOrderedName) AS MiddleOrderedName
+--			,IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.FirstOrderedName) AS FirstOrderedName
+--			,CONCAT(
+--					IIF(@FirstNameVisible=1, IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.FirstOrderedName),''), ' ', 
+--					IIF(@MidNameVisible=1, IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.MiddleOrderedName),''), ' ', 
+--					IIF(@LastNameVisible=1, IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.LastOrderedName),'')
+--					) as GroupContactName
+--		FROM PersonalIdentification P
+--		INNER JOIN Individual I ON P.PersonalIdentificationId = I.PersonalIdentificationId
+--		INNER JOIN Collective C ON C.GroupContact_Id = I.GUIDReference
+--		INNER JOIN #TEMPTypeTranslation TType ON C.TypeTranslation_Id = TType.TypeTranslation_Id
+--		INNER JOIN Candidate Can ON Can.GUIDReference = C.GUIDReference
+--		INNER JOIN StateDefinition SD ON Can.CandidateStatus = SD.Id
+--		INNER JOIN TransitionBehavior TB ON SD.StateDefinitionBehavior_Id = TB.GUIDReference
+--		WHERE C.CountryId = @pCountryId
+--		) AS TEMPTABLE
+--	WHERE 
+--			(  
+--					(@op1 IS NULL)
+--					OR (@op1=@IsEqualTo AND					GroupContactName = @GroupContactName )
+--					OR (@op1=@IsNotEqualTo AND				GroupContactName <> @GroupContactName)
+--					OR (@op1=@IsLessThan AND				GroupContactName < @GroupContactName)
+--					OR (@op1=@IsLessThanOrEqualTo AND		GroupContactName <= @GroupContactName )
+--					OR (@op1=@IsGreaterThan AND				GroupContactName > @GroupContactName)
+--					OR (@op1=@IsGreaterThanOrEqualTo AND	GroupContactName >= @GroupContactName)
+--					OR (@op1=@Contains AND					GroupContactName LIKE '%'+@GroupContactName+'%')
+--					OR (@op1=@DoesNotContain AND			GroupContactName NOT LIKE '%'+@GroupContactName+'%')
+--					OR (@op1=@StartsWith AND				GroupContactName LIKE ''+@GroupContactName+'%')
+--					OR (@op1=@EndsWith AND					GroupContactName LIKE '%'+@GroupContactName+'' )	
+--					)
+--					AND
+--			(
+--			(@op2 IS NULL)
+--			OR (
+--				@op2 = @IsEqualTo
+--				AND BusinessId = @BusinessId
+--				)
+--			OR (
+--				@op2 = @IsNotEqualTo
+--				AND BusinessId <> @BusinessId
+--				)
+--			OR (
+--				@op2 = @IsLessThan
+--				AND BusinessId < @BusinessId
+--				)
+--			OR (
+--				@op2 = @IsLessThanOrEqualTo
+--				AND BusinessId <= @BusinessId
+--				)
+--			OR (
+--				@op2 = @IsGreaterThan
+--				AND BusinessId > @BusinessId
+--				)
+--			OR (
+--				@op2 = @IsGreaterThanOrEqualTo
+--				AND BusinessId >= @BusinessId
+--				)
+--			OR (
+--				@op2 = @Contains
+--				AND BusinessId LIKE '%' + @BusinessId + '%'
+--				)
+--			OR (
+--				@op2 = @DoesNotContain
+--				AND BusinessId NOT LIKE '%' + @BusinessId + '%'
+--				)
+--			OR (
+--				@op2 = @StartsWith
+--				AND BusinessId LIKE '' + @BusinessId + '%'
+--				)
+--			OR (
+--				@op2 = @EndsWith
+--				AND BusinessId LIKE '%' + @BusinessId + ''
+--				)
+--			)
+--		AND (
+--			(@op3 IS NULL)
+--			OR (
+--				@op3 = @IsEqualTo
+--				AND GroupType = @GroupType
+--				)
+--			OR (
+--				@op3 = @IsNotEqualTo
+--				AND GroupType <> @GroupType
+--				)
+--			OR (
+--				@op3 = @IsLessThan
+--				AND GroupType < @GroupType
+--				)
+--			OR (
+--				@op3 = @IsLessThanOrEqualTo
+--				AND GroupType <= @GroupType
+--				)
+--			OR (
+--				@op3 = @IsGreaterThan
+--				AND GroupType > @GroupType
+--				)
+--			OR (
+--				@op3 = @IsGreaterThanOrEqualTo
+--				AND GroupType >= @GroupType
+--				)
+--			OR (
+--				@op3 = @Contains
+--				AND GroupType LIKE '%' + @GroupType + '%'
+--				)
+--			OR (
+--				@op3 = @DoesNotContain
+--				AND GroupType NOT LIKE '%' + @GroupType + '%'
+--				)
+--			OR (
+--				@op3 = @StartsWith
+--				AND GroupType LIKE '' + @GroupType + '%'
+--				)
+--			OR (
+--				@op3 = @EndsWith
+--				AND GroupType LIKE '%' + @GroupType + ''
+--				)
+--			)
+--	ORDER BY CASE 
+--			WHEN @pOrderBy = 'BusinessId'
+--				AND @pOrderType = 'ASC'
+--				THEN BusinessId
+--			END ASC
+--		,CASE 
+--			WHEN @pOrderBy = 'BusinessId'
+--				AND @pOrderType = 'DESC'
+--				THEN BusinessId
+--			END DESC
+--		,CASE 
+--			WHEN @pOrderBy = 'GroupType'
+--				AND @pOrderType = 'ASC'
+--				THEN GroupType
+--			END ASC
+--		,CASE 
+--			WHEN @pOrderBy = 'GroupType'
+--				AND @pOrderType = 'DESC'
+--				THEN GroupType
+--			END DESC
+--		,CASE 
+--			WHEN @pOrderBy = 'CreationTimeStamp'
+--				AND @pOrderType = 'ASC'
+--				THEN CreationTimeStamp
+--			END ASC
+--		,CASE 
+--			WHEN @pOrderBy = 'CreationTimeStamp'
+--				AND @pOrderType = 'DESC'
+--				THEN CreationTimeStamp
+--			END DESC
+--		,CASE 
+--			WHEN @pOrderBy = 'GroupContactName'
+--				AND @pOrderType = 'ASC'
+--				THEN GroupContactName
+--			END ASC 
+--		,CASE 
+--			WHEN @pOrderBy = 'GroupContactName'
+--				AND @pOrderType = 'DESC'
+--				THEN GroupContactName
+--			END DESC 
+--		,CASE  
+--		WHEN @pOrderBy IS NULL
+--				THEN CreationTimeStamp
+--		END DESC
+			
+--	OFFSET @OFFSETRows rows
+
+--	FETCH NEXT @pPageSize rows ONLY
+--	OPTION (RECOMPILE)
+
+--	SELECT *
+--	FROM #TempGroup
+--	ORDER BY CreationTimeStamp DESC
+
+--	SELECT T.Id AS GroupId
+--		,DA.Candidate_Id AS CandidateId
+--		,D.Code AS RoleCode
+--	FROM #TempGroup T
+--	INNER JOIN DynamicRoleAssignment DA ON T.Id = DA.Group_Id
+--	INNER JOIN DynamicRole D ON DA.DynamicRole_Id = D.DynamicRoleId
+--	WHERE DA.Candidate_Id IS NOT NULL
+
+--	SELECT DISTINCT T.Id AS GroupId
+--		,I.GUIDReference AS Id
+--		,I.IndividualId AS BusinessId
+--		,IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.LastOrderedName) AS [LastName]
+--		,IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.MiddleOrderedName) AS MiddleName
+--		,IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.FirstOrderedName) AS [FirstName]
+--		,CONCAT(
+--					IIF(@FirstNameVisible=1, IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.FirstOrderedName),''), ' ', 
+--					IIF(@MidNameVisible=1, IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.MiddleOrderedName),''), ' ', 
+--					IIF(@LastNameVisible=1, IIF(i.IsAnonymized = 1, 'XXXXXXXXX', P.LastOrderedName),'')
+--					) as GroupContactName
+--	FROM #TempGroup T
+--	INNER JOIN CollectiveMembership CM ON T.Id = CM.Group_Id
+--	INNER JOIN DynamicRoleAssignment DA ON CM.Individual_Id = DA.Candidate_Id
+--		AND T.Id = DA.Group_Id
+--	INNER JOIN Individual I ON Cm.Individual_Id = I.GUIDReference
+--	INNER JOIN PersonalIdentification P ON I.PersonalIdentificationId = P.PersonalIdentificationId
+
+--	DROP TABLE #TempGroup
+--END
+
+--GO

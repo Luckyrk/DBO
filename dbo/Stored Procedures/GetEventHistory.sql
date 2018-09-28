@@ -1,0 +1,2937 @@
+﻿------/*##########################################################################
+-------- Name				: GetEventHistory
+-------- Date             : 2015-04-26
+-------- Author           : 
+-------- Purpose          : 
+-------- Usage            : 
+-------- Impact           : 
+-------- Required grants  : 
+-------- Called by        : 
+-------- PARAM Definitions
+------       @pIndividualId VARCHAR(20) -- Individual Id of type varchar
+------       @pCultureCode int  - Culture Code of type int
+------	   @pGPSUser VARCHAR(100) - Logged user
+------	   @pOrderBy VARCHAR(100)
+
+
+
+------	   @pOrderType VARCHAR(10)
+
+
+
+------	   @pPageNumber INT = 1
+
+
+
+------	   @pPageSize INT = 100
+
+
+
+------	   @pdays NVARCHAR(10)
+
+
+
+------	   @pIsExport BIT = 0
+
+
+
+------	   @pParametersTable dbo.GridParametersTable readonly
+
+
+
+-------- Sample Execution :
+
+
+
+------declare @p8 dbo.GridParametersTable
+
+
+
+------insert into @p8 values(N'BusinessId',N'0001-01',N'IsNotEqualTo',NULL,NULL,NULL)
+
+
+
+------		--insert into @p8 values(N'CreationTimeStamp',N'2014-09-18',N'IsEqualTo',N'OR',N'IsLessThanOrEqualTo',N'2014-09-11')
+
+
+
+------		--insert into @p8 values(N'Points',N'100',N'IsGreaterThanOrEqualTo',NULL,NULL,NULL)
+
+
+
+------		--insert into @p8 values(N'DiaryDateFull',N'2006.7.4',N'IsEqualTo',NULL,NULL,NULL)
+
+
+
+------		--insert into @p8 values(N'BusinessId',N'10257901-01',N'IsEqualTo',NULL,NULL,NULL)
+
+
+
+------exec GetEventHistory '46DA6EA7-09B9-C8B8-FE31-08D24C0DD6E3',2057,'testuser','ChangedDate','asc',1,100,'40',1,@p8
+
+
+
+------##########################################################################
+
+
+
+-------- version  user						date        change 
+
+
+
+-------- 1.0  Jagadeesh Boddu				  2015-04-26   Initial
+
+
+
+-------- 2.0  Rajender Abbidi               2015-08-23   Rquirement Changes
+-------- 3.0  Satish Dandibhotla			  2015-10-23   36508 - Bug Fix - Order Change when Export Click
+-------- 4.0  Matias Fernandez			  2015-11-16   36872 - Bug Fix - User Transaction Date instead of CreationTimestamp for incentives/rewards
+-------- 4.1  Matias Fernandez			  2015-11-17   36835 - Bug Fix - Devices events were taking the gpsuser from stock kit instead of statedefhistory
+-------- 4.3  Uday Gaddipati                2016-7-19     PBI 38763 - Implemented only for France as of now.
+------##########################################################################*/
+
+
+------CREATE PROCEDURE [dbo].[GetEventHistory] (
+------	@pIndividualId UNIQUEIDENTIFIER = '929C02DC-7A08-429C-ACE9-5239A69242E1'
+------	,@pCultureCode INT = 2057
+------	,@pGPSUser VARCHAR(100)
+------	,@pOrderBy VARCHAR(100)
+------	,@pOrderType VARCHAR(10)
+------	,@pPageNumber INT = 1
+------	,@pPageSize INT = 100
+------	,@pdays NVARCHAR(10)
+------	,@pIsExport BIT = 0
+------	,@pParametersTable dbo.GridParametersTable readonly
+------	)
+------AS
+------BEGIN
+------	DECLARE @CountryId UNIQUEIDENTIFIER
+
+------	SELECT @CountryId = CountryId
+------	FROM Individual
+------	WHERE GUIDReference = @pIndividualId
+
+------	DECLARE @GetDate DATETIME
+
+------	SET @GetDate = (
+------			SELECT dbo.GetLocalDateTimeByCountryId(getdate(), @CountryId)
+------			)
+
+------	DECLARE @Configuration_Id UNIQUEIDENTIFIER
+
+------	SELECT @Configuration_Id = Configuration_Id
+------	FROM Country
+------	WHERE CountryId = @CountryId
+
+------	DECLARE @IsVisibleFirstName BIT
+------	DECLARE @IsVisibleMiddleName BIT
+------	DECLARE @IsVisibleLastName BIT
+------	DECLARE @IsCountryEnabledRecordConfig BIT
+
+------	SELECT @IsCountryEnabledRecordConfig = Visible
+------	FROM FieldConfiguration
+------	WHERE [Key] = 'IsRecordsEnable'
+------		AND CountryConfiguration_Id = @Configuration_Id
+
+------	SELECT @IsVisibleFirstName = Visible
+------	FROM FieldConfiguration
+------	WHERE [Key] = 'FirstName'
+------		AND CountryConfiguration_Id = @Configuration_Id
+
+------	SELECT @IsVisibleMiddleName = Visible
+------	FROM FieldConfiguration
+------	WHERE [Key] = 'MiddleName'
+------		AND CountryConfiguration_Id = @Configuration_Id
+
+------	SELECT @IsVisibleLastName = Visible
+------	FROM FieldConfiguration
+------	WHERE [Key] = 'LastName'
+------		AND CountryConfiguration_Id = @Configuration_Id
+
+------	DECLARE @DateRangeCanceled UNIQUEIDENTIFIER
+------		,@DateRangeCompleted UNIQUEIDENTIFIER
+------		,@DateRangeActive UNIQUEIDENTIFIER
+------		,@DateRangeFuture UNIQUEIDENTIFIER
+
+------	SELECT @DateRangeCanceled = TranslationId
+------	FROM Translation
+------	WHERE KeyName = 'DateRangeCanceled'
+
+------	SELECT @DateRangeCompleted = TranslationId
+------	FROM Translation
+------	WHERE KeyName = 'DateRangeCompleted'
+
+------	SELECT @DateRangeActive = TranslationId
+------	FROM Translation
+------	WHERE KeyName = 'DateRangeActive'
+
+------	SELECT @DateRangeFuture = TranslationId
+------	FROM Translation
+------	WHERE KeyName = 'DateRangeFuture'
+
+------	DECLARE @ActionStateToDo UNIQUEIDENTIFIER
+------		,@ActionStateInProgress UNIQUEIDENTIFIER
+------		,@ActionStatePerformed UNIQUEIDENTIFIER
+------		,@ActionStateCanceledByUser UNIQUEIDENTIFIER
+------		,@ActionStateCanceledBySystem UNIQUEIDENTIFIER
+------		,@ActionStateUnknown UNIQUEIDENTIFIER
+
+------	SELECT @ActionStateToDo = TranslationId
+------	FROM Translation
+------	WHERE KeyName = 'ActionState.ToDo'
+
+------	SELECT @ActionStateInProgress = TranslationId
+------	FROM Translation
+------	WHERE KeyName = 'ActionState.InProgress'
+
+------	SELECT @ActionStatePerformed = TranslationId
+------	FROM Translation
+------	WHERE KeyName = 'ActionState.Performed'
+
+------	SELECT @ActionStateCanceledByUser = TranslationId
+------	FROM Translation
+------	WHERE KeyName = 'ActionState.CanceledByUser'
+
+------	SELECT @ActionStateCanceledBySystem = TranslationId
+------	FROM Translation
+------	WHERE KeyName = 'ActionState.CanceledBySystem'
+
+------	SELECT @ActionStateUnknown = TranslationId
+------	FROM Translation
+------	WHERE KeyName = 'ActionState.Unknown'
+
+------	DECLARE @GroupBusinessDigits INT
+------		,@GroupIndDigits INT
+
+------	SELECT @GroupBusinessDigits = GroupBusinessIdDigits
+------		,@GroupIndDigits = IndividualBusinessIdDigits
+------	FROM CountryConfiguration
+------	WHERE Id = @Configuration_Id
+
+------	DECLARE @ActionNameKey NVARCHAR(256)
+------		,@ActionCommentKey NVARCHAR(max)
+------		,@CoomsReasonKey NVARCHAR(256)
+------		,@AccountType NVARCHAR(256)
+------		,@AccountAmmount NVARCHAR(256)
+
+------	SELECT @ActionNameKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------	FROM Translation
+------	WHERE KeyName = 'Communication:Action:TypeLabel'
+
+------	SELECT @ActionCommentKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------	FROM Translation
+------	WHERE KeyName = 'Communication:Action:Comment'
+
+------	SELECT @CoomsReasonKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------	FROM Translation
+------	WHERE KeyName = 'Individuals:Index:Reason'
+
+------	SELECT @AccountType = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------	FROM Translation
+------	WHERE KeyName = 'Individuals:Update:Account.Transactions.Items.Type'
+
+------	SELECT @AccountAmmount = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------	FROM Translation
+------	WHERE KeyName = 'Individuals:Update:Account.Transactions.Items.Amount'
+------	/* Get the country records configuration */
+------	DECLARE @EndDate DATETIME
+------	IF (@IsCountryEnabledRecordConfig = 0)
+------BEGIN
+------	IF @pdays = 'default'
+------		SET @pdays = '40'
+
+------	IF (
+------			@pdays = 'All'
+------			OR @pIsExport = 1
+------			)
+------		SET @EndDate = '1900-01-01'
+------	ELSE
+------		SET @EndDate = DATEADD(DD, - CAST(@pdays AS INT), @GetDate)
+------END
+------ELSE
+------BEGIN
+------	SET @EndDate = '1900-01-01'
+------END
+
+------DECLARE @IncomingTranslation NVARCHAR(100)
+------DECLARE @OutgoingTranslation NVARCHAR(100)
+------DECLARE @GroupID UNIQUEIDENTIFIER
+------DECLARE @CollectiveMembershipId UNIQUEIDENTIFIER
+
+------SELECT @GroupID = Group_Id
+------FROM CollectiveMembership
+------WHERE Individual_Id = (@pIndividualId)
+
+------SELECT @CollectiveMembershipId = CollectiveMembershipId
+------FROM CollectiveMembership
+------WHERE Individual_Id = (@pIndividualId)
+
+------DECLARE @EmailSentTransalationId UNIQUEIDENTIFIER
+
+------SELECT @EmailSentTransalationId = TranslationId
+------FROM Translation
+------WHERE KeyName = 'EmailSent'
+
+------SET @IncomingTranslation = (
+------		SELECT TOP 1 VALUE
+------		FROM TRANSLATION T
+------		INNER JOIN TRANSLATIONTERM TT ON TT.TRANSLATION_ID = T.TRANSLATIONID
+------		WHERE T.KEYNAME = 'CommunicationEvent:Incoming:True'
+------			AND CultureCode = 2057
+------		)
+------SET @OutgoingTranslation = (
+------		SELECT TOP 1 VALUE
+------		FROM TRANSLATION T
+------		INNER JOIN TRANSLATIONTERM TT ON TT.TRANSLATION_ID = T.TRANSLATIONID
+------		WHERE T.KEYNAME = 'CommunicationEvent:Incoming:False'
+------			AND CultureCode = 2057
+------		)
+
+------DECLARE @Separator NVARCHAR(200) = ' - '
+------DECLARE @FieldsSeparator1 NVARCHAR(200) = ' : '
+------DECLARE @FieldsSeparator2 NVARCHAR(200) = ' / '
+------DECLARE @ActionTaskTypeId UNIQUEIDENTIFIER = NULL
+
+------SELECT @ActionTaskTypeId = GUIDReference
+------FROM ActionTaskType
+------WHERE [TagTranslation_Id] = (
+------		SELECT TranslationId
+------		FROM Translation
+------		WHERE KeyName = 'FormSubmited'
+------		)
+------	AND Country_Id = @CountryId
+
+------IF @ActionTaskTypeId IS NULL
+------	SET @ActionTaskTypeId = '00000000-0000-0000-0000-000000000000'
+
+------IF OBJECT_ID('tempdb..#EventHistoryTable') IS NOT NULL
+------BEGIN
+------	DROP TABLE #EventHistoryTable
+------END
+
+------CREATE TABLE #EventHistoryTable (
+------	IndividualId NVARCHAR(256)
+------	,GPSUser VARCHAR(256)
+------	,[ChangedDate] DATETIME
+------	,[Type] VARCHAR(256)
+------	,Comments NVARCHAR(MAX)
+------	,CurentState VARCHAR(256)
+------	,ReasonId UNIQUEIDENTIFIER NULL
+------	,IsUpdateReasonAllowed BIT NULL DEFAULT 0
+------	,IsResendEmailAllowed BIT NULL DEFAULT 0
+------	,Summary NVARCHAR(MAX) NULL DEFAULT ''
+------	,Comment NVARCHAR(MAX) NULL DEFAULT ''
+------	,CommEventId UNIQUEIDENTIFIER NULL
+------	,
+------	)
+
+------	/*SP Filtering logic*/
+------DECLARE @GPSUser VARCHAR(256)
+------DECLARE @CurentState VARCHAR(256)
+------DECLARE @Comments NVARCHAR(max)
+------DECLARE @Type VARCHAR(256)
+------DECLARE @Date DATETIME
+------DECLARE @BusinessId VARCHAR(256)
+
+------	DECLARE @op1 VARCHAR(50)
+------	,@op2 VARCHAR(50)
+------	,@op3 VARCHAR(50)
+------	,@op4 VARCHAR(50)
+------	,@op5 VARCHAR(50)
+------	,@op6 VARCHAR(50)
+------DECLARE @SecondOpCreationDate5 DATETIME
+------DECLARE @LogicalOperator5 VARCHAR(5)
+------DECLARE @SecondOperator5 VARCHAR(50)
+
+------SELECT @op1 = Opertor
+------	,@GPSUser = ParameterValue
+------FROM @pParametersTable
+------WHERE ParameterName = 'User'
+
+------SELECT @op2 = Opertor
+------	,@CurentState = ParameterValue
+------FROM @pParametersTable
+------WHERE ParameterName = 'State'
+
+------SELECT @op3 = Opertor
+------	,@Comments = ParameterValue
+------FROM @pParametersTable
+------WHERE ParameterName = 'Comments'
+
+------SELECT @op4 = Opertor
+------	,@Type = ParameterValue
+------FROM @pParametersTable
+------WHERE ParameterName = 'Type'
+------	SELECT @op5 = Opertor
+------		,@Date = CAST(ParameterValue AS DATETIME)
+------		,@SecondOperator5 = SecondParameterOperator
+------		,@SecondOpCreationDate5 = CAST(SecondParameterValue AS DATETIME)
+------		,@LogicalOperator5 = LogicalOperator
+------	FROM @pParametersTable
+------	WHERE ParameterName = 'ChangedDate'
+------	SELECT @op6 = Opertor
+------	,@BusinessId = ParameterValue
+------FROM @pParametersTable
+------WHERE ParameterName = 'BusinessId'
+------	DECLARE @DateVarchar VARCHAR(100) = CAST(@Date AS VARCHAR)
+------		,@SecondOpCreationDate5Varchar VARCHAR(100) = CAST(@SecondOpCreationDate5 AS VARCHAR)
+------	DECLARE @WhereParameter VARCHAR(MAX)
+------		,@pOrderByParameter VARCHAR(MAX) = NULL
+------	DECLARE @OFFSETRows INT = 0
+------	DECLARE @IsLessThan VARCHAR(50) = 'IsLessThan'
+------		,@IsLessThanOrEqualTo VARCHAR(50) = 'IsLessThanOrEqualTo'
+------		,@IsEqualTo VARCHAR(50) = 'IsEqualTo'
+------		,@IsNotEqualTo VARCHAR(50) = 'IsNotEqualTo'
+------		,@IsGreaterThanOrEqualTo VARCHAR(50) = 'IsGreaterThanOrEqualTo'
+------		,@IsGreaterThan VARCHAR(50) = 'IsGreaterThan'
+------		,@StartsWith VARCHAR(50) = 'StartsWith'
+------		,@EndsWith VARCHAR(50) = 'EndsWith'
+------		,@Contains VARCHAR(50) = 'Contains'
+------		,@IsContainedIn VARCHAR(50) = 'IsContainedIn'
+------		,@DoesNotContain VARCHAR(50) = 'DoesNotContain'
+------	IF (@pOrderBy IS NULL)
+------	BEGIN
+------	SET @pOrderBy = '@Date'
+------END
+
+------	IF (@pOrderType IS NULL)
+------	SET @pOrderType = 'desc'
+
+------IF (@pIsExport = 0)
+------	SET @OFFSETRows = (@pPageSize * (@pPageNumber - 1))
+------ELSE
+------	SET @pPageSize = 15000;
+------	DECLARE @IndividualStatusKey NVARCHAR(256)
+------	,@ExclusionKey NVARCHAR(256)
+------	,@PanelistStatusKey NVARCHAR(256)
+------	,@ActionKey NVARCHAR(256)
+------	,@CommunicationKey NVARCHAR(256)
+------	,@RedemptionsKey NVARCHAR(256)
+------	,@IncentivesKey NVARCHAR(256)
+------	,@DevicesKey NVARCHAR(256)
+------	,@OrdersKey NVARCHAR(256)
+------	,@PollingKey NVARCHAR(256)
+------	,@FornNamelabel NVARCHAR(256)
+------	,@GroupStatusKey NVARCHAR(256)
+------	SELECT @IndividualStatusKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:IndividualStatus'
+------SELECT @GroupStatusKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:GroupStatus'
+
+------SELECT @ExclusionKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:Exclusion'
+
+------SELECT @PanelistStatusKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:PanelistStatus'
+
+------SELECT @ActionKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:Action'
+
+------SELECT @CommunicationKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:Communication'
+
+------SELECT @RedemptionsKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:Redemptions'
+
+------SELECT @IncentivesKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:Incentives'
+
+------SELECT @DevicesKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:Devices'
+
+------SELECT @OrdersKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:Orders'
+
+------SELECT @PollingKey = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:Polling'
+
+------SELECT @FornNamelabel = dbo.GetTranslationValue(TranslationId, @pCultureCode)
+------FROM Translation
+------WHERE KeyName = 'EventHistory:Form:Name'
+
+------/* Individual Status */
+------INSERT INTO #EventHistoryTable (
+------	IndividualId
+------	,GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	)
+------SELECT I.IndividualId
+------	,SDH.GPSUser AS [GPSUser]
+------	,SDH.GPSUpdateTimestamp AS [ChangedDate]
+------	,@IndividualStatusKey AS [Type]
+------	,(
+------		CASE 
+------			WHEN @IsVisibleFirstName = 1
+------				THEN ISNULL(Pid.FirstOrderedName, '')
+------			ELSE ''
+------			END
+------		) + ' ' + (
+------		CASE 
+------			WHEN @IsVisibleMiddleName = 1
+------				THEN ISNULL(Pid.MiddleOrderedName, '')
+------			ELSE ''
+------			END
+------		) + ' ' + (
+------		CASE 
+------			WHEN @IsVisibleLastName = 1
+------				THEN ISNULL(PId.LastOrderedName, '')
+------			ELSE ''
+------			END
+------		) + '  ( ' + dbo.GetTranslationValue(SDF.Label_Id, @pCultureCode) + @Separator + dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) + ' )' AS 'Comments'
+------	,dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) AS 'CurentState'
+------FROM CollectiveMembership CMP
+------INNER JOIN Individual I ON CMP.Group_Id = @GroupID
+------	AND I.GUIDReference = CMP.Individual_Id
+------INNER JOIN StateDefinitionHistory SDH ON SDH.Candidate_Id = I.GUIDReference
+------LEFT JOIN PersonalIdentification PId ON PId.PersonalIdentificationId = I.PersonalIdentificationId
+------LEFT JOIN ReasonForChangeState RCS ON SDH.ReasonForchangeState_Id = RCS.Id
+------INNER JOIN StateDefinition SDF ON SDF.id = SDH.From_Id
+------INNER JOIN StateDefinition SDL ON SDL.id = SDH.To_Id
+------WHERE I.CountryId = @CountryId
+------	AND SDH.CreationTimeStamp >= @EndDate
+
+------   	INSERT INTO #EventHistoryTable (
+------	IndividualId
+------	,GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	)
+------SELECT (
+------		CASE 
+------			WHEN LEN(C.Sequence) < @GroupBusinessDigits
+------				THEN RIGHT(REPLICATE('0', @GroupBusinessDigits), (@GroupBusinessDigits - LEN(C.Sequence))) + cast(C.Sequence AS NVARCHAR)
+------			ELSE cast(C.Sequence AS NVARCHAR)
+------			END
+------		) AS BusinessId
+------	,SDH.GPSUser AS [GPSUser]
+------	,SDH.GPSUpdateTimestamp AS [ChangedDate]
+------	,@GroupStatusKey AS [Type]
+------	,(
+------		CASE 
+------			WHEN LEN(C.Sequence) < @GroupBusinessDigits
+------				THEN RIGHT(REPLICATE('0', @GroupBusinessDigits), (@GroupBusinessDigits - LEN(C.Sequence))) + cast(C.Sequence AS NVARCHAR)
+------			ELSE cast(C.Sequence AS NVARCHAR)
+------			END
+------		) + '  ( ' + dbo.GetTranslationValue(SDF.Label_Id, @pCultureCode) + @Separator + dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) + ' )' AS 'Comments'
+------	,dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) AS 'CurentState'
+------FROM CollectiveMembership CM
+------INNER JOIN StateDefinitionHistory SDH ON SDH.GroupMembership_Id = CM.CollectiveMembershipId
+------INNER JOIN StateDefinition SDF ON SDF.id = SDH.From_Id
+------INNER JOIN StateDefinition SDL ON SDL.id = SDH.To_Id
+------INNER JOIN Collective C ON C.GUIDReference = CM.Group_Id
+------WHERE CM.Group_Id = @GroupID
+------	AND C.CountryId = @CountryId
+------	AND CM.CollectiveMembershipId = @CollectiveMembershipId
+------	AND SDH.CreationTimeStamp >= @EndDate
+------	/* Exclusion Status */
+
+------	INSERT INTO #EventHistoryTable (
+------	IndividualId
+------	,GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	)
+------SELECT I.IndividualId
+------	,E.GPSUser AS [GPSUser]
+------	,E.GPSUpdateTimestamp AS [ChangedDate]
+------	,@ExclusionKey AS [Type]
+------	,FORMAT(E.Range_From, 'dd/MM/yyyy') + (
+------		CASE 
+------			WHEN E.Range_To IS NOT NULL
+------				THEN @Separator + ISNULL(FORMAT(E.Range_To, 'dd/MM/yyyy'), '')
+------			ELSE ''
+------			END
+------		) AS 'Comments'
+------	,(
+------		CASE 
+------			WHEN E.IsClosed = 1
+------				--AND E.Range_From > E.Range_To [Note :As per the Guy comment in the Bug 39465, we are allowing the below change
+------				AND E.Range_From < E.Range_To
+------				THEN dbo.GetTranslationValue(@DateRangeCanceled, @pCultureCode)
+------			WHEN E.Range_To IS NOT NULL
+------				AND E.Range_To < @GetDate
+------				THEN dbo.GetTranslationValue(@DateRangeCompleted, @pCultureCode)
+------			WHEN E.Range_To IS NOT NULL
+------				AND (
+------					@GetDate >= E.Range_From
+------					AND @GetDate <= E.Range_To
+------					)
+------				THEN dbo.GetTranslationValue(@DateRangeActive, @pCultureCode)
+------			WHEN E.Range_To IS NOT NULL
+------				AND (
+------					@GetDate < E.Range_From
+------					AND @GetDate < E.Range_To
+------					)
+------				THEN dbo.GetTranslationValue(@DateRangeFuture, @pCultureCode)
+------			WHEN E.Range_To IS NULL
+------				AND (@GetDate >= E.Range_From)
+------				THEN dbo.GetTranslationValue(@DateRangeActive, @pCultureCode)
+------			WHEN E.Range_To IS NULL
+------				AND (@GetDate < E.Range_From)
+------				THEN dbo.GetTranslationValue(@DateRangeFuture, @pCultureCode)
+------			END
+------		) AS 'Status'
+------FROM CollectiveMembership CMP
+------INNER JOIN Individual I ON CMP.Group_Id = @GroupID
+------	AND CMP.Individual_Id = I.GUIDReference
+------INNER JOIN ExclusionIndividual EI ON EI.Individual_Id = i.GUIDReference
+------INNER JOIN Exclusion E ON EI.Exclusion_Id = E.GUIDReference
+------INNER JOIN ExclusionType ET ON ET.GUIDReference = E.[Type_Id]
+------INNER JOIN Translation TR ON TR.TranslationId = ET.Translation_Id
+------WHERE I.CountryId = @CountryId
+------	AND E.GPSUpdateTimestamp >= @EndDate
+------	/*Panelist Status House Hold */
+------	INSERT INTO #EventHistoryTable (
+------	IndividualId
+------	,GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	)
+------SELECT (
+------		CASE 
+------			WHEN LEN(C.Sequence) < @GroupBusinessDigits
+------				THEN RIGHT(REPLICATE('0', @GroupBusinessDigits), (@GroupBusinessDigits - LEN(C.Sequence))) + cast(C.Sequence AS NVARCHAR)
+------			ELSE cast(C.Sequence AS NVARCHAR)
+------			END
+------		) AS BusinessId
+------	,SDH.GPSUser AS [GPSUser]
+------	,SDH.CreationTimeStamp AS [ChangedDate]
+------	,@PanelistStatusKey AS [Type]
+------	,PA.NAME + @FieldsSeparator1 + dbo.GetTranslationValue(SDF.Label_Id, @pCultureCode) + @Separator + dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) + @FieldsSeparator2 + 'Reason : ' + ISNULL(TR.KEYNAME, 'Reason Not Entered') AS 'Reason'
+------	,dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) AS 'CurentState'
+------FROM Collective C
+------INNER JOIN Panelist Pl ON Pl.PanelMember_Id = C.GUIDReference
+------INNER JOIN StateDefinitionHistory sdh ON pl.GUIDReference = sdh.Panelist_Id
+------INNER JOIN StateDefinition SDF ON SDF.id = SDH.From_Id
+------INNER JOIN StateDefinition SDL ON SDL.id = SDH.To_Id
+------LEFT JOIN ReasonForChangeState RCS ON SDH.ReasonForchangeState_Id = RCS.Id
+------LEFT JOIN TRANSLATION TR ON TR.translationid = RCS.Description_Id
+------INNER JOIN Panel PA ON PA.GUIDReference = pl.Panel_Id
+------WHERE pl.Country_Id = @CountryId
+------	AND C.GUIDReference = @GroupID
+------	AND SDH.CreationTimeStamp >= @EndDate
+
+------UNION
+
+------SELECT (
+------		CASE 
+------			WHEN LEN(C.Sequence) < @GroupBusinessDigits
+------				THEN RIGHT(REPLICATE('0', @GroupBusinessDigits), (@GroupBusinessDigits - LEN(C.Sequence))) + cast(C.Sequence AS NVARCHAR)
+------			ELSE cast(C.Sequence AS NVARCHAR)
+------			END
+------		) AS BusinessId
+------	,SDH.GPSUser AS [GPSUser]
+------	,SDH.CreationTimeStamp AS [ChangedDate]
+------	,@PanelistStatusKey AS [Type]
+------	,PA.NAME + @FieldsSeparator1 + dbo.GetTranslationValue(SDF.Label_Id, @pCultureCode) + @Separator + dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) + @FieldsSeparator2 + 'Reason : ' + ISNULL(TR.KEYNAME, 'Reason Not Entered') AS 'Reason'
+------	,dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) AS 'CurentState'
+------FROM Collective C
+------INNER JOIN Panelist Pl ON Pl.PanelMember_Id = C.GUIDReference
+------INNER JOIN [UK_StateDefinitionHistory_Reinstatement_Dropouts] sdh ON pl.GUIDReference = sdh.Panelist_Id
+------INNER JOIN StateDefinition SDF ON SDF.id = SDH.From_Id
+------INNER JOIN StateDefinition SDL ON SDL.id = SDH.To_Id
+------LEFT JOIN ReasonForChangeState RCS ON SDH.ReasonForchangeState_Id = RCS.Id
+------LEFT JOIN TRANSLATION TR ON TR.translationid = RCS.Description_Id
+------INNER JOIN Panel PA ON PA.GUIDReference = pl.Panel_Id
+------WHERE pl.Country_Id = @CountryId
+------	AND C.GUIDReference = @GroupID
+------	AND SDH.CreationTimeStamp >= @EndDate
+------	/*Panelist Status Individual */
+------	INSERT INTO #EventHistoryTable (
+------	IndividualId
+------	,GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	)
+------SELECT I.IndividualId AS BusinessId
+------	,SDH.GPSUser AS [GPSUser]
+------	,SDH.CreationTimeStamp AS [ChangedDate]
+------	,@PanelistStatusKey AS [Type]
+------	,PA.NAME + @FieldsSeparator1 + dbo.GetTranslationValue(SDF.Label_Id, @pCultureCode) + @Separator + dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) + @FieldsSeparator2 + ' Reason : ' + ISNULL(TR.KEYNAME, 'Reason Not Entered') AS 'Reason'
+------	,dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) AS 'CurentState'
+------FROM CollectiveMembership CMP
+------INNER JOIN Individual I ON CMP.Individual_Id = I.GUIDReference
+------	AND CMP.Group_Id = @GroupID
+------INNER JOIN Panelist Pl ON Pl.PanelMember_Id = CMP.Individual_Id
+------INNER JOIN StateDefinitionHistory sdh ON pl.GUIDReference = sdh.Panelist_Id
+------INNER JOIN StateDefinition SDF ON SDF.id = SDH.From_Id
+------INNER JOIN StateDefinition SDL ON SDL.id = SDH.To_Id
+------LEFT JOIN ReasonForChangeState RCS ON SDH.ReasonForchangeState_Id = RCS.Id
+------LEFT JOIN TRANSLATION TR ON TR.translationid = RCS.Description_Id
+------INNER JOIN Panel PA ON PA.GUIDReference = pl.Panel_Id
+------WHERE pl.Country_Id = @CountryId
+------	AND SDH.CreationTimeStamp >= @EndDate
+------UNION
+------SELECT I.IndividualId AS BusinessId
+------	,SDH.GPSUser AS [GPSUser]
+------	,SDH.CreationTimeStamp AS [ChangedDate]
+------	,@PanelistStatusKey AS [Type]
+------	,PA.NAME + @FieldsSeparator1 + dbo.GetTranslationValue(SDF.Label_Id, @pCultureCode) + @Separator + dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) + @FieldsSeparator2 + ' Reason : ' + ISNULL(TR.KEYNAME, 'Reason Not Entered') AS 'Reason'
+------	,dbo.GetTranslationValue(SDL.Label_Id, @pCultureCode) AS 'CurentState'
+------FROM CollectiveMembership CMP
+------INNER JOIN Individual I ON CMP.Individual_Id = I.GUIDReference
+------	AND CMP.Group_Id = @GroupID
+------INNER JOIN Panelist Pl ON Pl.PanelMember_Id = CMP.Individual_Id
+------INNER JOIN [UK_StateDefinitionHistory_Reinstatement_Dropouts] sdh ON pl.GUIDReference = sdh.Panelist_Id
+------INNER JOIN StateDefinition SDF ON SDF.id = SDH.From_Id
+------INNER JOIN StateDefinition SDL ON SDL.id = SDH.To_Id
+------LEFT JOIN ReasonForChangeState RCS ON SDH.ReasonForchangeState_Id = RCS.Id
+------LEFT JOIN TRANSLATION TR ON TR.translationid = RCS.Description_Id
+------INNER JOIN Panel PA ON PA.GUIDReference = pl.Panel_Id
+------WHERE pl.Country_Id = @CountryId
+------	AND SDH.CreationTimeStamp >= @EndDate
+------		/*Actions*/
+------		/* with out form  */
+------		;
+------	WITH TempActions
+------	AS (
+------		SELECT AT.GPSUser AS [GPSUser]
+------			,AT.GPSUpdateTimestamp AS [ChangedDate]
+------			,@ActionKey AS [Type]
+------			,@ActionNameKey + @FieldsSeparator1 + (
+------				CASE 
+------					WHEN AT.ActionComment IS NOT NULL
+------						THEN (dbo.GetTranslationValue(ATT.TagTranslation_Id, @pCultureCode) + @FieldsSeparator2 + @ActionCommentKey + @FieldsSeparator1 + isnull(AT.ActionComment, ''))
+------							--WHEN ABV.ValueDesc IS NOT NULL
+------							--THEN (dbo.GetTranslationValue(ATT.TagTranslation_Id, @pCultureCode) + @FieldsSeparator2 + @ActionCommentKey + @FieldsSeparator1 + isnull(ABV.ValueDesc, '') +' On ' + CONVERT(VARCHAR,AT.CompletionDate,120))
+------					ELSE dbo.GetTranslationValue(ATT.TagTranslation_Id, @pCultureCode)
+------					END
+------				) AS 'Comments'
+------			,(
+------				CASE 
+------					WHEN AT.[State] = 1
+------						THEN dbo.GetTranslationValue(@ActionStateToDo, @pCultureCode)
+------					WHEN AT.[State] = 2
+------						THEN dbo.GetTranslationValue(@ActionStateInProgress, @pCultureCode)
+------					WHEN AT.[State] = 4
+------						THEN dbo.GetTranslationValue(@ActionStatePerformed, @pCultureCode)
+------					WHEN AT.[State] = 8
+------						THEN dbo.GetTranslationValue(@ActionStateCanceledByUser, @pCultureCode)
+------					WHEN AT.[State] = 16
+------						THEN dbo.GetTranslationValue(@ActionStateCanceledBySystem, @pCultureCode)
+------					ELSE dbo.GetTranslationValue(@ActionStateUnknown, @pCultureCode)
+------					END
+------				) AS 'CurentState'
+------			,I.IndividualId
+------		FROM CollectiveMembership CMP
+------		INNER JOIN Individual I ON CMP.Individual_Id = I.GUIDReference
+------			AND CMP.Group_Id = @GroupID
+------		INNER JOIN ActionTask AT ON AT.Candidate_Id = I.GUIDReference
+------		INNER JOIN ActionTaskType ATT ON ATT.GUIDReference = AT.ActionTaskType_Id
+------		--INNER JOIN AttributeValue ABV on ABV.CandidateId=i.GUIDReference and ABV.ValueDesc IS NOT NULL --AND CONVERT(VARCHAR(11),ABV.GPSUpdateTimestamp,108) = CONVERT(VARCHAR(11),AT.GPSUpdateTimestamp,108)
+------		WHERE I.CountryId = @CountryId
+------			AND AT.ActionTaskType_Id <> @ActionTaskTypeId
+------			AND AT.GPSUpdateTimestamp >= @EndDate
+------		UNION
+------		SELECT AT.GPSUser AS [GPSUser]
+------			,AT.GPSUpdateTimestamp AS [ChangedDate]
+------			,@ActionKey AS [Type]
+------			,@ActionNameKey + @FieldsSeparator1 + (
+------				CASE 
+------					WHEN AT.ActionComment IS NOT NULL
+------						THEN (dbo.GetTranslationValue(ATT.TagTranslation_Id, @pCultureCode) + @FieldsSeparator2 + @ActionCommentKey + @FieldsSeparator1 + isnull(AT.ActionComment, ''))
+------							--  WHEN ABV.ValueDesc IS NOT NULL
+------							--THEN (dbo.GetTranslationValue(ATT.TagTranslation_Id, @pCultureCode) + @FieldsSeparator2 + @ActionCommentKey + @FieldsSeparator1 + isnull(ABV.ValueDesc, '') +' On ' + CONVERT(VARCHAR,AT.CompletionDate,120))
+------					ELSE dbo.GetTranslationValue(ATT.TagTranslation_Id, @pCultureCode)
+------					END
+------				) AS 'Comments'
+------			,(
+------				CASE 
+------					WHEN AT.[State] = 1
+------						THEN dbo.GetTranslationValue(@ActionStateToDo, @pCultureCode)
+------					WHEN AT.[State] = 2
+------						THEN dbo.GetTranslationValue(@ActionStateInProgress, @pCultureCode)
+------					WHEN AT.[State] = 4
+------						THEN dbo.GetTranslationValue(@ActionStatePerformed, @pCultureCode)
+------					WHEN AT.[State] = 8
+------						THEN dbo.GetTranslationValue(@ActionStateCanceledByUser, @pCultureCode)
+------					WHEN AT.[State] = 16
+------						THEN dbo.GetTranslationValue(@ActionStateCanceledBySystem, @pCultureCode)
+------					ELSE dbo.GetTranslationValue(@ActionStateUnknown, @pCultureCode)
+------					END
+------				) AS 'CurentState'
+------			,dbo.GetGroupSequence(C.Sequence, @CountryId) AS IndividualId
+------		FROM CollectiveMembership CMP
+------		INNER JOIN Collective C ON C.GUIDReference = CMP.Group_Id
+------			AND C.GUIDReference = @GroupID
+------		INNER JOIN ActionTask AT ON AT.Candidate_Id = C.GUIDReference
+------		INNER JOIN ActionTaskType ATT ON ATT.GUIDReference = AT.ActionTaskType_Id
+------		--INNER JOIN AttributeValue ABV on ABV.CandidateId=C.GUIDReference  and ABV.ValueDesc IS NOT NULL --AND  CONVERT(VARCHAR(11),ABV.GPSUpdateTimestamp,108) = CONVERT(VARCHAR(11),AT.GPSUpdateTimestamp,108)
+------		WHERE C.CountryId = @CountryId
+------			AND AT.ActionTaskType_Id <> @ActionTaskTypeId
+------			AND AT.GPSUpdateTimestamp >= @EndDate
+------		)
+
+------	INSERT INTO #EventHistoryTable (
+------	GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	,IndividualId
+------	)
+------SELECT *
+------FROM TempActions
+
+------/*Actions with forms*/
+------INSERT INTO #EventHistoryTable (
+------	GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	,IndividualId
+------	)
+------SELECT AT.GPSUser AS [GPSUser]
+------	,AT.GPSUpdateTimestamp AS [ChangedDate]
+------	,@ActionKey AS [Type]
+------	,@ActionNameKey + @FieldsSeparator1 + dbo.GetTranslationValue(ATT.TagTranslation_Id, @pCultureCode) + @FieldsSeparator2 + @FornNamelabel + @FieldsSeparator1 + dbo.GetTranslationValue(F.Translation_Id, @pCultureCode) AS 'Comments'
+------	,(
+------		CASE 
+------			WHEN AT.[State] = 1
+------				THEN dbo.GetTranslationValue(@ActionStateToDo, @pCultureCode)
+------			WHEN AT.[State] = 2
+------				THEN dbo.GetTranslationValue(@ActionStateInProgress, @pCultureCode)
+------			WHEN AT.[State] = 4
+------				THEN dbo.GetTranslationValue(@ActionStatePerformed, @pCultureCode)
+------			WHEN AT.[State] = 8
+------				THEN dbo.GetTranslationValue(@ActionStateCanceledByUser, @pCultureCode)
+------			WHEN AT.[State] = 16
+------				THEN dbo.GetTranslationValue(@ActionStateCanceledBySystem, @pCultureCode)
+------			ELSE dbo.GetTranslationValue(@ActionStateUnknown, @pCultureCode)
+------			END
+------		) AS 'CurentState'
+------	,I.IndividualId
+------FROM CollectiveMembership CMP
+------INNER JOIN Individual I ON CMP.Individual_Id = I.GUIDReference
+------	AND CMP.Group_Id = @GroupID
+------INNER JOIN ActionTask AT ON AT.Candidate_Id = I.GUIDReference
+------INNER JOIN ActionTaskType ATT ON ATT.GUIDReference = AT.ActionTaskType_Id
+------INNER JOIN Form F ON F.GUIDReference = AT.FormId
+------WHERE I.CountryId = @CountryId
+------	AND AT.ActionTaskType_Id = @ActionTaskTypeId
+------	AND AT.GPSUpdateTimestamp >= @EndDate
+
+------DECLARE @EmailSentTranslationKey UNIQUEIDENTIFIER
+
+------SELECT @EmailSentTranslationKey = TranslationId
+------FROM Translation
+------WHERE KeyName = 'EmailSent'
+
+------/*Communications*/
+------INSERT INTO #EventHistoryTable (
+------	GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	,IndividualId
+------	,ReasonId
+------	,IsUpdateReasonAllowed
+------	,IsResendEmailAllowed
+------	,Summary
+------	,Comment
+------	,CommEventId
+------	)
+------SELECT GPSUser AS [GPSUser]
+------	,CreationDate AS [ChangedDate]
+------	,ContactMechanismLabel + ' ' + @CommunicationKey AS [Type]
+------	,@CoomsReasonKey + @FieldsSeparator1 + dbo.GetTranslationValue(TagTranslation_Id, @pCultureCode) AS 'Reason'
+------	,(
+------		CASE 
+------			WHEN [State] = 1
+------				THEN 'InProgress'
+------			WHEN [State] = 2
+------				THEN 'Completed'
+------			WHEN [State] = 2
+------				THEN 'CompletedButActionOutstanding'
+------			END
+------		) AS 'CurentState'
+------	,IndividualId
+------	,ReasonId
+------	,IsUpdateReasonAllowed
+------	,IsResendEmailAllowed
+------	,Summary
+------	,(
+------		CASE 
+------			WHEN Comment <> Summary
+------				THEN Comment
+------			ELSE ''
+------			END
+------		) AS Comment
+------	,CommEventId
+------FROM (
+------	SELECT (
+------			CASE 
+------				WHEN cer.GPSUser = @pGPSUser
+------					THEN 1
+------				ELSE 0
+------				END
+------			) AS IsUpdateReasonAllowed
+------		,cer.GUIDReference AS ReasonId
+------		,Ce.GUIDReference AS CommEventId
+------		,cer.GPSUser AS GPSUser
+------		,CER.CreationTimeStamp as CreationDate
+------		,cer.CreationTimeStamp AS CreationTimeStamp
+------		,CERType.TagTranslation_Id
+------		,dbo.GetTranslationValue(CMT.DescriptionTranslation_Id, @pCultureCode) AS ContactMechanismLabel
+------		,CE.[State]
+------		,Indv.IndividualId
+------		,(
+------			CASE 
+------				WHEN @EmailSentTransalationId = CERType.TagTranslation_Id
+------					THEN 1
+------				ELSE 0
+------				END
+------			) AS IsResendEmailAllowed
+------		,(
+------			CASE 
+------				WHEN ISNULL(ED.[Subject], '') = ''
+------					THEN ISNULL(td.[Message], '')
+------				ELSE ED.[Subject]
+------				END
+------			) AS Summary
+------		,cer.Comment
+------	FROM CommunicationEvent CE
+------	INNER JOIN CommunicationEventReason CER ON cer.Communication_Id = ce.GUIDReference
+------	INNER JOIN CommunicationEventReasonType CERType ON CER.ReasonType_Id = CERType.GUIDReference
+------	INNER JOIN Individual Indv ON Indv.GUIDReference = ce.Candidate_Id
+------	INNER JOIN PersonalIdentification PersIdentity ON Indv.PersonalIdentificationId = PersIdentity.PersonalIdentificationId
+------	INNER JOIN CollectiveMembership CM ON cm.Individual_Id = Indv.GUIDReference
+------	INNER JOIN StateDefinition SD ON sd.Id = cm.State_Id
+------		AND sd.InactiveBehavior = 0
+------	LEFT JOIN DocumentCommunicationEventAssociation DCEA ON DCEA.CommunicationEventId = ce.guidreference
+------	LEFT JOIN Document Doc ON doc.DocumentId = DCEA.DocumentId
+------	LEFT JOIN ContactMechanismType CMT ON CE.ContactMechanism_Id = CMT.GUIDReference
+------	LEFT JOIN TextDocument TD ON TD.DocumentId = Doc.DocumentId
+------	LEFT JOIN emaildocument ED ON ed.DocumentId = Doc.DocumentId
+------	WHERE CM.Group_ID = @GroupID
+------		AND CER.CreationTimeStamp >= @EndDate
+------	) AS T
+------	/*Incentives Debit*/
+------	INSERT INTO #EventHistoryTable (
+------	GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	,IndividualId
+------	)
+------SELECT iat.GPSUser AS [GPSUser]
+------	--,iat.CreationTimeStamp AS [ChangedDate]
+------	,iat.TransactionDate AS [ChangedDate]
+------	,@RedemptionsKey AS [Type]
+------	,@AccountType + @FieldsSeparator1 + dbo.[GetTranslationValue](ipae.TypeName_Id, @pCultureCode) + @FieldsSeparator2 + @AccountAmmount + @FieldsSeparator1 + cast((isnull(iati.Ammount, 0) * - 1) AS NVARCHAR) AS 'Comments'
+------	,
+------	--'Point Type : '+dbo.[GetTranslationValue](ipae.TypeName_Id, @pCultureCode)+' / Amount : '+cast(isnull(iati.Ammount,'0') as nvarchar) as 'Comments',
+------	dbo.[GetTranslationValue](sd.Label_Id, @pCultureCode) AS 'CurentState'
+------	,I.IndividualId
+------FROM IncentiveAccount ia
+------INNER JOIN Individual i ON i.GUIDReference = ia.IncentiveAccountId
+------INNER JOIN CollectiveMembership CMP ON CMP.Individual_Id = i.GUIDReference
+------	AND CMP.Group_Id = @GroupId
+------INNER JOIN Candidate c ON c.GUIDReference = ia.IncentiveAccountId
+------INNER JOIN IncentiveAccountTransaction iat ON ia.IncentiveAccountId = iat.Account_Id
+------	AND iat.Type = 'Debit'
+------LEFT JOIN IncentiveAccountTransactionInfo iati ON iati.IncentiveAccountTransactionInfoId = iat.TransactionInfo_Id
+------LEFT JOIN TransactionSource ts ON iat.TransactionSource_Id = ts.TransactionSourceId
+------LEFT JOIN IncentivePoint ip ON ip.GUIDReference = iati.Point_Id
+------LEFT JOIN IncentivePointAccountEntryType ipae ON ipae.GUIDReference = ip.Type_Id
+------LEFT JOIN Package p ON p.Debit_Id = iat.IncentiveAccountTransactionId
+------LEFT JOIN StateDefinition sd ON sd.Id = p.State_Id
+------LEFT JOIN RewardDeliveryType rdt ON rdt.RewardDeliveryTypeId = iati.RewardDeliveryType_Id
+------WHERE i.CountryId = @CountryId
+------	AND iat.CreationTimeStamp >= @EndDate
+
+------	/*Incentives Credit*/
+------	INSERT INTO #EventHistoryTable (
+------	GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	,IndividualId
+------	)
+------SELECT iat.GPSUser AS [GPSUser]
+------	--,iat.CreationTimeStamp AS [ChangedDate]
+------	,iat.TransactionDate AS [ChangedDate]
+------	,@IncentivesKey AS [Type]
+------	,@AccountType + @FieldsSeparator1 + dbo.[GetTranslationValue](ipae.TypeName_Id, @pCultureCode) + @FieldsSeparator2 + @AccountAmmount + @FieldsSeparator1 + cast(isnull(iati.Ammount, '0') AS NVARCHAR) AS 'Comments'
+------	,'' AS 'CurentState'
+------	,I.IndividualId
+------FROM IncentiveAccount ia
+------INNER JOIN Candidate c ON c.GUIDReference = ia.IncentiveAccountId
+------INNER JOIN IncentiveAccountTransaction iat ON ia.IncentiveAccountId = iat.Account_Id
+------	AND iat.Type = 'Credit'
+------INNER JOIN Individual i ON i.GUIDReference = iat.Account_Id
+------INNER JOIN CollectiveMembership CMP ON CMP.Individual_Id = i.GUIDReference
+------	AND CMP.Group_Id = @GroupId
+------LEFT JOIN IncentiveAccountTransactionInfo iati ON iati.IncentiveAccountTransactionInfoId = iat.TransactionInfo_Id
+------LEFT JOIN TransactionSource ts ON iat.TransactionSource_Id = ts.TransactionSourceId
+------LEFT JOIN IncentivePoint ip ON ip.GUIDReference = iati.Point_Id
+------LEFT JOIN IncentivePointAccountEntryType ipae ON ipae.GUIDReference = ip.[Type_Id]
+------LEFT JOIN Panel p ON p.GUIDReference = iat.Panel_Id
+------WHERE i.CountryId = @CountryId
+------	AND iat.CreationTimeStamp >= @EndDate
+------	/*devices individual*/
+------	INSERT INTO #EventHistoryTable (
+------		IndividualId
+------		,GPSUser
+------		,[ChangedDate]
+------		,[Type]
+------		,Comments
+------		,CurentState
+------		)
+------SELECT i.IndividualId AS IndividualId
+------	,sdH1.GPSUser AS GPSUser
+------	,(
+------		CASE 
+------			WHEN sdH1.GPSUpdateTimestamp IS NOT NULL
+------				THEN sdH1.CreationTimeStamp
+------			WHEN si.CreationTimeStamp IS NULL
+------				THEN si.GPSUpdateTimestamp
+------			ELSE si.CreationTimeStamp
+------			END
+------		) AS [ChangedDate]
+------		,@DevicesKey AS [Type]
+------		,'SerialNumber : ' + si.SerialNumber + @FieldsSeparator2 + st.NAME + ' ( ' + dbo.GetTranslationValue(SDL.Label_Id, 2057) + ' ) On  ' + CONVERT(VARCHAR, sdH1.GPSUpdateTimestamp, 120) AS comments
+------		,dbo.GetTranslationValue(SDL.Label_Id, 2057) AS [State]
+------	FROM StockItem si
+------	INNER JOIN StockType st ON st.GUIDReference = si.[Type_Id]
+------	INNER JOIN StockStateDefinitionHistory SDH ON StockItem_Id = SI.GUIDReference
+------	INNER JOIN StateDefinitionHistory sdH1 ON sdH1.GUIDReference = SDH.GUIDReference
+------	--INNER JOIN StockLocation sl ON si.Location_Id = SDH.Location_Id
+------INNER JOIN StateDefinition SDF ON SDF.id = sdH1.From_Id
+------INNER JOIN StateDefinition SDL ON SDL.id = sdH1.To_Id
+------INNER JOIN Panelist pl ON pl.GUIDReference = SDH.Panelist_Id
+------INNER JOIN Individual i ON i.GUIDReference = pl.PanelMember_Id
+------	INNER JOIN CollectiveMembership CM ON I.GUIDReference = CM.Individual_Id
+------		AND CM.Group_Id = @GroupID
+------	WHERE CM.Group_Id = @GroupID
+------		AND (
+------		CASE 
+------			WHEN sdH1.GPSUpdateTimestamp IS NOT NULL
+------				THEN sdH1.CreationTimeStamp
+------			WHEN si.CreationTimeStamp IS NULL
+------				THEN si.GPSUpdateTimestamp
+------			ELSE si.CreationTimeStamp
+------			END
+------		) >= @EndDate
+------	UNION
+------	SELECT (
+------		CASE 
+------			WHEN LEN(C.Sequence) < @GroupBusinessDigits
+------				THEN RIGHT(REPLICATE('0', @GroupBusinessDigits), (@GroupBusinessDigits - LEN(C.Sequence))) + cast(C.Sequence AS NVARCHAR)
+------			ELSE cast(C.Sequence AS NVARCHAR)
+------			END
+------		) AS IndividualId
+------			,sdH1.GPSUser AS GPSUser
+------	,(
+------		CASE 
+------			WHEN sdH1.GPSUpdateTimestamp IS NOT NULL
+------				THEN sdH1.CreationTimeStamp
+------			WHEN si.CreationTimeStamp IS NULL
+------				THEN si.GPSUpdateTimestamp
+------			ELSE si.CreationTimeStamp
+------			END
+------		) AS [ChangedDate]
+------		,@DevicesKey AS [Type]
+------		,'SerialNumber : ' + si.SerialNumber + @FieldsSeparator2 + st.NAME + ' ( ' + dbo.GetTranslationValue(SDL.Label_Id, 2057) + ' ) On  ' + CONVERT(VARCHAR, sdH1.GPSUpdateTimestamp, 120) AS comments
+------		,dbo.GetTranslationValue(SDL.Label_Id, 2057) AS [State]
+------	FROM StockItem si
+------	INNER JOIN StockType st ON st.GUIDReference = si.[Type_Id]
+------INNER JOIN StockStateDefinitionHistory SDH ON StockItem_Id = SI.GUIDReference
+------INNER JOIN StateDefinitionHistory sdH1 ON sdH1.GUIDReference = SDH.GUIDReference
+--------INNER JOIN StockLocation sl ON si.Location_Id = SDH.Location_Id
+------INNER JOIN StateDefinition SDF ON SDF.id = sdH1.From_Id
+------INNER JOIN StateDefinition SDL ON SDL.id = sdH1.To_Id
+------INNER JOIN Panelist pl ON pl.GUIDReference = SDH.Panelist_Id
+------INNER JOIN Collective C ON C.GUIDReference = pl.PanelMember_Id
+------INNER JOIN CollectiveMembership CM ON CM.Group_Id = c.GUIDReference
+------AND cm.Group_Id = @GroupID
+------	AND cm.Group_Id = @GroupID
+------WHERE CM.Group_Id = @GroupID
+------	AND (
+------		CASE 
+------			WHEN sdH1.GPSUpdateTimestamp IS NOT NULL
+------				THEN sdH1.CreationTimeStamp
+------			WHEN si.CreationTimeStamp IS NULL
+------				THEN si.GPSUpdateTimestamp
+------			ELSE si.CreationTimeStamp
+------			END
+------		) >= @EndDate
+------	-- Change of expected Kit
+------	INSERT INTO #EventHistoryTable (
+------		IndividualId
+------		,GPSUser
+------		,[ChangedDate]
+------		,[Type]
+------		,Comments
+------		,CurentState
+------		)
+------	SELECT i.IndividualId AS IndividualId
+------		,SKH.GPSUser AS GPSUser
+------		,(
+------			CASE 
+------				WHEN SKH.CreationTimeStamp IS NULL
+------					THEN SKH.GPSUpdateTimestamp
+------				ELSE SKH.CreationTimeStamp
+------				END
+------			) AS [ChangedDate]
+------		,@DevicesKey AS [Type]
+------		,'Old Kit : ' + SK.NAME + @FieldsSeparator2 + 'New Kit : ' + SK1.NAME + @FieldsSeparator2 + 'Reason : ' + dbo.GetTranslationValue(RSK.Description_Id, 2057) AS comments
+------		,dbo.GetTranslationValue(RSK.Description_Id, 2057) AS Reason
+------	FROM StockKitHistory SKH
+------INNER JOIN StockKit SK ON sk.GUIDReference = SKH.From_Id
+------INNER JOIN StockKit SK1 ON sk1.GUIDReference = SKH.To_Id
+------INNER JOIN Panelist pl ON pl.GUIDReference = SKH.Panelist_Id
+------INNER JOIN Individual i ON i.GUIDReference = pl.PanelMember_Id
+------INNER JOIN ReasonForStockKitChange RSK ON RSK.Id = SKH.Reason_Id
+------INNER JOIN CollectiveMembership CM ON I.GUIDReference = CM.Individual_Id AND CM.Group_Id = @GroupID
+------WHERE (
+------		CASE 
+------			WHEN SKH.CreationTimeStamp IS NULL
+------				THEN SKH.GPSUpdateTimestamp
+------			ELSE SKH.CreationTimeStamp
+------			END
+------		) >= @EndDate
+------	UNION
+------	SELECT (
+------			CASE 
+------				WHEN LEN(C.Sequence) < @GroupBusinessDigits
+------					THEN RIGHT(REPLICATE('0', @GroupBusinessDigits), (@GroupBusinessDigits - LEN(C.Sequence))) + cast(C.Sequence AS NVARCHAR)
+------				ELSE cast(C.Sequence AS NVARCHAR)
+------				END
+------			) AS IndividualId
+------		,SKH.GPSUser AS GPSUser
+------		,(
+------		CASE 
+------		WHEN SKH.CreationTimeStamp IS NULL
+------			THEN SKH.GPSUpdateTimestamp
+------		ELSE SKH.CreationTimeStamp
+------		END) AS [ChangedDate]
+------		,@DevicesKey AS [Type]
+------		,'Old Kit : ' + SK.NAME + @FieldsSeparator2 + 'New Kit : ' + SK1.NAME + @FieldsSeparator2 + 'Reason : ' + dbo.GetTranslationValue(RSK.Description_Id, 2057) AS comments
+------,dbo.GetTranslationValue(RSK.Description_Id, 2057) AS Reason
+------FROM StockKitHistory SKH
+------INNER JOIN StockKit SK ON sk.GUIDReference = SKH.From_Id
+------INNER JOIN StockKit SK1 ON sk1.GUIDReference = SKH.To_Id
+------INNER JOIN Panelist pl ON pl.GUIDReference = SKH.Panelist_Id
+--------INNER JOIN Individual i ON i.GUIDReference = pl.PanelMember_Id
+------INNER JOIN ReasonForStockKitChange RSK ON RSK.Id = SKH.Reason_Id
+------INNER JOIN Collective C ON C.GUIDReference = pl.PanelMember_Id
+------INNER JOIN CollectiveMembership CM ON CM.Group_Id = c.GUIDReference AND cm.Group_Id = @GroupID
+------WHERE (
+------		CASE 
+------			WHEN skh.CreationTimeStamp IS NULL
+------				THEN skh.GPSUpdateTimestamp
+------			ELSE skh.CreationTimeStamp
+------			END
+------		) >= @EndDate
+------	/* Orders */
+------DECLARE @OrdersTbl TABLE (
+------	OrderName NVARCHAR(256)
+------	,OrderId BIGINT
+------	,OrderItemCounts INT
+------	)
+------DECLARE @OrdersTbl2 TABLE (
+------	OrderName NVARCHAR(256)
+------	,OrderId BIGINT
+------	,OrderItemCounts INT
+------	)
+------	INSERT INTO @OrdersTbl (
+------	OrderName
+------	,OrderId
+------	,OrderItemCounts
+------	)
+------SELECT ST.NAME AS OrderName
+------	,o.OrderId AS OrderId
+------	,SUM(OI.Quantity) AS OrderItemCounts
+------FROM [Order] O
+------INNER JOIN OrderType OT ON O.[Type_Id] = OT.Id
+------INNER JOIN OrderItem OI ON OI.Order_Id = O.OrderId
+------INNER JOIN StockType ST ON OI.StockType_Id = ST.GUIDReference
+------INNER JOIN StockPanelistLocation spl ON o.Location_Id = spl.GUIDReference
+------INNER JOIN Panelist pl ON pl.GUIDReference = spl.Panelist_Id
+------INNER JOIN Collective C ON C.GUIDReference = @GroupID
+------	AND pl.PanelMember_Id = C.GUIDReference
+------GROUP BY ST.NAME
+------	,o.OrderId
+
+------INSERT INTO @OrdersTbl2 (
+------	OrderName
+------	,OrderId
+------	,OrderItemCounts
+------	)
+------SELECT OrderName
+------	,OrderId
+------	,OrderItemCounts
+------FROM (
+------	SELECT CM.Individual_Id
+------		,ST.NAME AS OrderName
+------		,o.OrderId AS OrderId
+------		,SUM(OI.Quantity) AS OrderItemCounts
+------	FROM [Order] O
+------	INNER JOIN OrderType OT ON O.[Type_Id] = OT.Id
+------	INNER JOIN OrderItem OI ON OI.Order_Id = O.OrderId
+------	INNER JOIN StockType ST ON OI.StockType_Id = ST.GUIDReference
+------	INNER JOIN StockPanelistLocation spl ON o.Location_Id = spl.GUIDReference
+------	INNER JOIN Panelist pl ON pl.GUIDReference = spl.Panelist_Id
+------	INNER JOIN CollectiveMembership CM ON CM.Group_Id = @GroupID
+------		AND pl.PanelMember_Id = CM.Individual_Id
+------	GROUP BY ST.NAME
+------		,o.OrderId
+------		,CM.Individual_Id
+------	) t
+------	INSERT INTO #EventHistoryTable (
+------	IndividualId
+------	,GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	)
+------SELECT (
+------		CASE 
+------			WHEN LEN(C.Sequence) < @GroupBusinessDigits
+------				THEN RIGHT(REPLICATE('0', @GroupBusinessDigits), (@GroupBusinessDigits - LEN(C.Sequence))) + cast(C.Sequence AS NVARCHAR)
+------			ELSE cast(C.Sequence AS NVARCHAR)
+------			END
+------		) AS IndividualId
+------	,O.GPSUser AS GPSUser
+------	,O.OrderedDate AS [ChangedDate]
+------	,@OrdersKey AS [Type]
+------	,pf.OrderDetails + @FieldsSeparator2 + 'Reason ' + @FieldsSeparator1 + ISNULL(dbo.GetTranslationValue(T.TranslationId, 2057), T.KeyName) AS Comments
+------	,dbo.GetTranslationValue(sd.Label_Id, 2057) AS [state]
+------FROM (
+------	SELECT OrderId
+------		,stuff((
+------				SELECT ' + ' + P1.OrderInfo
+------				FROM (
+------					SELECT (
+------							CASE 
+------								WHEN OrderItemCounts > 1
+------									THEN cast(OrderItemCounts AS NVARCHAR) + ' ' + OrderName
+------								ELSE OrderName
+------								END
+------							) AS OrderInfo
+------						,OrderId
+------					FROM (
+------						SELECT OrderName
+------							,OrderId
+------							,OrderItemCounts
+------						FROM @OrdersTbl
+------						) tmp1
+------					) p1
+------				WHERE p1.OrderId = p2.OrderId
+------				ORDER BY OrderInfo
+------				FOR XML PATH('')
+------				), 1, 2, '') AS OrderDetails
+------		,ROW_NUMBER() OVER (
+------			PARTITION BY OrderId ORDER BY OrderId
+------			) AS RowNumb
+------	FROM (
+------		SELECT cast(OrderItemCounts AS NVARCHAR) + ' ' + OrderName AS OrderDetails
+------			,OrderId
+------		FROM (
+------			SELECT OrderName
+------				,OrderId
+------				,OrderItemCounts
+------			FROM @OrdersTbl
+------			) temp2
+------		) p2
+------	) pf
+------INNER JOIN [Order] O ON o.OrderId = pf.OrderId
+------INNER JOIN OrderType OT ON O.[Type_Id] = OT.Id
+------INNER JOIN StockPanelistLocation spl ON o.Location_Id = spl.GUIDReference
+------INNER JOIN StateDefinition sd ON sd.Id = o.State_Id
+------INNER JOIN Panelist pl ON pl.GUIDReference = spl.Panelist_Id
+------INNER JOIN Collective C ON C.GUIDReference = pl.PanelMember_Id
+------	AND C.GUIDReference = @GroupID
+------INNER JOIN ActionTask AT ON AT.GUIDReference = O.ActionTask_Id
+------INNER JOIN Reasonforordertype RFOT ON RFOT.Id = O.Reason_Id
+------INNER JOIN Translation T ON T.TranslationId = RFOT.Description_Id
+------INNER JOIN TranslationTerm TT ON TT.Translation_Id = T.TranslationId
+------WHERE pf.RowNumb = 1
+------	AND O.OrderedDate >= @EndDate
+------	AND TT.CultureCode = 2057
+------ORDER BY O.OrderedDate DESC
+------	INSERT INTO #EventHistoryTable (
+------	IndividualId
+------	,GPSUser
+------	,[ChangedDate]
+------	,[Type]
+------	,Comments
+------	,CurentState
+------	)
+------SELECT I.IndividualId AS IndividualId
+------	,O.GPSUser AS GPSUser
+------	,O.OrderedDate AS [ChangedDate]
+------	,@OrdersKey AS [Type]
+------	,pf.OrderDetails + @FieldsSeparator2 + 'Reason ' + @FieldsSeparator1 + ISNULL(dbo.GetTranslationValue(T.TranslationId, 2057), T.KeyName) AS Comments
+------	,dbo.GetTranslationValue(sd.Label_Id, 2057) AS [state]
+------FROM (
+------	SELECT OrderId
+------		,stuff((
+------				SELECT ' + ' + P1.OrderInfo
+------				FROM (
+------					SELECT (
+------							CASE 
+------								WHEN OrderItemCounts > 1
+------									THEN cast(OrderItemCounts AS NVARCHAR) + ' ' + OrderName
+------								ELSE OrderName
+------								END
+------							) AS OrderInfo
+------						,OrderId
+------					FROM (
+------						SELECT OrderName
+------							,OrderId
+------							,OrderItemCounts
+------						FROM @OrdersTbl2
+------						) tmp1
+------					) p1
+------				WHERE p1.OrderId = p2.OrderId
+------				ORDER BY OrderInfo
+------				FOR XML PATH('')
+------				), 1, 2, '') AS OrderDetails
+------		,ROW_NUMBER() OVER (
+------			PARTITION BY OrderId ORDER BY OrderId
+------			) AS RowNumb
+------	FROM (
+------		SELECT cast(OrderItemCounts AS NVARCHAR) + ' ' + OrderName AS OrderDetails
+------			,OrderId
+------		FROM (
+------			SELECT OrderName
+------				,OrderId
+------				,OrderItemCounts
+------			FROM @OrdersTbl2
+------			) temp2
+------		) p2
+------	) pf
+------INNER JOIN [Order] O ON o.OrderId = pf.OrderId
+------INNER JOIN OrderType OT ON O.[Type_Id] = OT.Id
+------INNER JOIN StockPanelistLocation spl ON o.Location_Id = spl.GUIDReference
+------INNER JOIN StateDefinition sd ON sd.Id = o.State_Id
+------INNER JOIN Panelist pl ON pl.GUIDReference = spl.Panelist_Id
+------INNER JOIN CollectiveMembership CM ON CM.Group_Id = @GroupID
+------	AND pl.PanelMember_Id = CM.Individual_Id
+------INNER JOIN Individual I ON I.GUIDReference = CM.Individual_Id
+------INNER JOIN ActionTask AT ON AT.GUIDReference = O.ActionTask_Id
+------INNER JOIN Reasonforordertype RFOT ON RFOT.Id = O.Reason_Id
+------INNER JOIN Translation T ON T.TranslationId = RFOT.Description_Id
+------INNER JOIN TranslationTerm TT ON TT.Translation_Id = T.TranslationId
+------WHERE pf.RowNumb = 1
+------	AND O.OrderedDate >= @EndDate
+------	AND TT.CultureCode = 2057
+------ORDER BY O.OrderedDate DESC
+------	/* Polling */
+------	INSERT INTO #EventHistoryTable (
+------	IndividualId
+------	,GPSUser
+------	,CurentState
+------	,[Type]
+------	,Comments
+------	,[ChangedDate]
+------	)
+------SELECT Isec.HOUSEHOLD_NUMBER AS IndividualId
+------	,'' AS [GPSUser]
+------	,Isec.CALL_SUCCESS AS CurentState
+------	,@PollingKey AS [Type]
+------	,Isec.PHONE_NUMBER AS 'Comments'
+------	,ISEC.CALL_START_TIME AS [ChangedDate]
+------FROM Collective C
+------INNER JOIN [ISEC].[PT0255] Isec ON Isec.HOUSEHOLD_NUMBER = C.Sequence
+------WHERE C.GUIDReference = @GroupID
+------	AND ISEC.CALL_START_TIME >= @EndDate
+------	IF (
+------		@pIsExport = 0
+------		AND (
+------			@IsCountryEnabledRecordConfig = 0
+------			OR (
+------				@IsCountryEnabledRecordConfig = 1
+------				AND @pdays = 'All'
+------				)
+------			)
+------		)
+------BEGIN
+------	SELECT COUNT(0) AS TotlaRows
+------	FROM #EventHistoryTable
+------	WHERE (
+------			(@op1 IS NULL)
+------			OR (
+------				@op1 = @IsEqualTo
+------				AND GPSUser = @GPSUser
+------				)
+------			OR (
+------				@op1 = @IsNotEqualTo
+------				AND GPSUser <> @GPSUser
+------				)
+------			OR (
+------				@op1 = @IsLessThan
+------				AND GPSUser < @GPSUser
+------				)
+------			OR (
+------				@op1 = @IsLessThanOrEqualTo
+------				AND GPSUser <= @GPSUser
+------				)
+------			OR (
+------				@op1 = @IsGreaterThan
+------				AND GPSUser > @GPSUser
+------				)
+------			OR (
+------				@op1 = @IsGreaterThanOrEqualTo
+------				AND GPSUser >= @GPSUser
+------				)
+------			OR (
+------				@op1 = @Contains
+------				AND GPSUser LIKE '%' + @GPSUser + '%'
+------				)
+------			OR (
+------				@op1 = @DoesNotContain
+------				AND GPSUser NOT LIKE '%' + @GPSUser + '%'
+------				)
+------			OR (
+------				@op1 = @StartsWith
+------				AND GPSUser LIKE '' + @GPSUser + '%'
+------				)
+------			OR (
+------				@op1 = @EndsWith
+------				AND GPSUser LIKE '%' + @GPSUser + ''
+------				)
+------			)
+------		AND (
+------			(@op2 IS NULL)
+------			OR (
+------				@op2 = @IsEqualTo
+------				AND CurentState = @CurentState
+------				)
+------			OR (
+------				@op2 = @IsNotEqualTo
+------				AND CurentState <> @CurentState
+------				)
+------			OR (
+------				@op2 = @IsLessThan
+------				AND CurentState < @CurentState
+------				)
+------			OR (
+------				@op2 = @IsLessThanOrEqualTo
+------				AND CurentState <= @CurentState
+------				)
+------			OR (
+------				@op2 = @IsGreaterThan
+------				AND CurentState > @CurentState
+------				)
+------			OR (
+------				@op2 = @IsGreaterThanOrEqualTo
+------				AND CurentState >= @CurentState
+------				)
+------			OR (
+------				@op2 = @Contains
+------				AND CurentState LIKE '%' + @CurentState + '%'
+------				)
+------			OR (
+------				@op2 = @DoesNotContain
+------				AND CurentState NOT LIKE '%' + @CurentState + '%'
+------				)
+------			OR (
+------				@op2 = @StartsWith
+------				AND CurentState LIKE '' + @CurentState + '%'
+------				)
+------			OR (
+------				@op2 = @EndsWith
+------				AND CurentState LIKE '%' + @CurentState + ''
+------				)
+------			)
+------		AND (
+------			(@op3 IS NULL)
+------			OR (
+------				@op3 = @IsEqualTo
+------				AND Comments = @Comments
+------				)
+------			OR (
+------				@op3 = @IsNotEqualTo
+------				AND Comments <> @Comments
+------				)
+------			OR (
+------				@op3 = @IsLessThan
+------				AND Comments < @Comments
+------				)
+------			OR (
+------				@op3 = @IsLessThanOrEqualTo
+------				AND Comments <= @Comments
+------				)
+------			OR (
+------				@op3 = @IsGreaterThan
+------				AND Comments > @Comments
+------				)
+------			OR (
+------				@op3 = @IsGreaterThanOrEqualTo
+------				AND Comments >= @Comments
+------				)
+------			OR (
+------				@op3 = @Contains
+------				AND Comments LIKE '%' + @Comments + '%'
+------				)
+------			OR (
+------				@op3 = @DoesNotContain
+------				AND Comments NOT LIKE '%' + @Comments + '%'
+------				)
+------			OR (
+------				@op3 = @StartsWith
+------				AND Comments LIKE '' + @Comments + '%'
+------				)
+------			OR (
+------				@op3 = @EndsWith
+------				AND Comments LIKE '%' + @Comments + ''
+------				)
+------			)
+------		AND (
+------			(@op4 IS NULL)
+------			OR (
+------				@op4 = @IsEqualTo
+------				AND [Type] = @Type
+------				)
+------			OR (
+------				@op4 = @IsNotEqualTo
+------				AND [Type] <> @Type
+------				)
+------			OR (
+------				@op4 = @IsLessThan
+------				AND [Type] < @Type
+------				)
+------			OR (
+------				@op4 = @IsLessThanOrEqualTo
+------				AND [Type] <= @Type
+------				)
+------			OR (
+------				@op4 = @IsGreaterThan
+------				AND [Type] > @Type
+------				)
+------			OR (
+------				@op4 = @IsGreaterThanOrEqualTo
+------				AND [Type] >= @Type
+------				)
+------			OR (
+------				@op4 = @Contains
+------				AND [Type] LIKE '%' + @Type + '%'
+------				)
+------			OR (
+------				@op4 = @DoesNotContain
+------				AND [Type] NOT LIKE '%' + @Type + '%'
+------				)
+------			OR (
+------				@op4 = @StartsWith
+------				AND [Type] LIKE '' + @Type + '%'
+------				)
+------			OR (
+------				@op4 = @EndsWith
+------				AND [Type] LIKE '%' + @Type + ''
+------				)
+------			)
+------		AND (
+------			(@op5 IS NULL)
+------			OR (
+------				@op5 IS NULL
+------				AND @LogicalOperator5 IS NULL
+------				)
+------			OR (
+------				@LogicalOperator5 = 'OR'
+------				AND (
+------					(
+------						(
+------							@op5 = @IsEqualTo
+------							AND [ChangedDate] = @Date
+------							)
+------						OR (
+------							@op5 = @IsNotEqualTo
+------							AND [ChangedDate] <> @Date
+------							)
+------						OR (
+------							@op5 = @IsLessThan
+------							AND [ChangedDate] < @Date
+------							)
+------						OR (
+------							@op5 = @IsLessThanOrEqualTo
+------							AND [ChangedDate] <= @Date
+------							)
+------						OR (
+------							@op5 = @IsGreaterThan
+------							AND [ChangedDate] > @Date
+------							)
+------						OR (
+------							@op5 = @IsGreaterThanOrEqualTo
+------							AND [ChangedDate] >= @Date
+------							)
+------						OR (
+------							@op5 = @Contains
+------							AND [ChangedDate] LIKE '%' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @DoesNotContain
+------							AND [ChangedDate] NOT LIKE '%' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @StartsWith
+------							AND [ChangedDate] LIKE '' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @EndsWith
+------							AND [ChangedDate] LIKE '%' + @DateVarchar + ''
+------							)
+------						)
+------					OR (
+------						(
+------							@SecondOperator5 = @IsEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsNotEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsLessThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsLessThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsGreaterThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsGreaterThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @Contains
+------							AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @DoesNotContain
+------							AND [ChangedDate] NOT LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @StartsWith
+------							AND [ChangedDate] LIKE '' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @EndsWith
+------							AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + ''
+------							)
+------						)
+------					)
+------				)
+------			OR (
+------				@LogicalOperator5 = 'AND'
+------				AND (
+------					(
+------						(
+------							@op5 = @IsEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @Date
+------							)
+------						OR (
+------							@op5 = @IsNotEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @Date
+------							)
+------						OR (
+------							@op5 = @IsLessThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @Date
+------							)
+------						OR (
+------							@op5 = @IsLessThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @Date
+------							)
+------						OR (
+------							@op5 = @IsGreaterThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @Date
+------							)
+------						OR (
+------							@op5 = @IsGreaterThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @Date
+------							)
+------						OR (
+------							@op5 = @Contains
+------							AND [ChangedDate] LIKE '%' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @DoesNotContain
+------							AND [ChangedDate] NOT LIKE '%' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @StartsWith
+------							AND [ChangedDate] LIKE '' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @EndsWith
+------							AND [ChangedDate] LIKE '%' + @DateVarchar + ''
+------							)
+------						)
+------					AND (
+------						(
+------							@SecondOperator5 = @IsEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsNotEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsLessThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsLessThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsGreaterThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsGreaterThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @Contains
+------							AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @DoesNotContain
+------							AND [ChangedDate] NOT LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @StartsWith
+------							AND [ChangedDate] LIKE '' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @EndsWith
+------							AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + ''
+------							)
+------						)
+------					)
+------				)
+------			OR (
+------				@op5 = @IsEqualTo
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @Date
+------				)
+------			OR (
+------				@op5 = @IsNotEqualTo
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @Date
+------				)
+------			OR (
+------				@op5 = @IsLessThan
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @Date
+------				)
+------			OR (
+------				@op5 = @IsLessThanOrEqualTo
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @Date
+------				)
+------			OR (
+------				@op5 = @IsGreaterThan
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @Date
+------				)
+------			OR (
+------				@op5 = @IsGreaterThanOrEqualTo
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @Date
+------				)
+------			OR (
+------				@op5 = @Contains
+------				AND @SecondOperator5 IS NULL
+------				AND [ChangedDate] LIKE '%' + @DateVarchar + '%'
+------				)
+------			OR (
+------				@op5 = @DoesNotContain
+------				AND @SecondOperator5 IS NULL
+------				AND [ChangedDate] NOT LIKE '%' + @DateVarchar + '%'
+------				)
+------			OR (
+------				@op5 = @StartsWith
+------				AND @SecondOperator5 IS NULL
+------				AND [ChangedDate] LIKE '' + @DateVarchar + '%'
+------				)
+------			OR (
+------				@op5 = @EndsWith
+------				AND @SecondOperator5 IS NULL
+------				AND [ChangedDate] LIKE '%' + @DateVarchar + ''
+------				)
+------			)
+------		AND (
+------			(@op6 IS NULL)
+------			OR (
+------				@op6 = @IsEqualTo
+------				AND [IndividualId] = @BusinessId
+------				)
+------			OR (
+------				@op6 = @IsNotEqualTo
+------				AND [IndividualId] <> @BusinessId
+------				)
+------			OR (
+------				@op6 = @IsLessThan
+------				AND [IndividualId] < @BusinessId
+------				)
+------			OR (
+------				@op6 = @IsLessThanOrEqualTo
+------				AND [IndividualId] <= @BusinessId
+------				)
+------			OR (
+------				@op6 = @IsGreaterThan
+------				AND [IndividualId] > @BusinessId
+------				)
+------			OR (
+------				@op6 = @IsGreaterThanOrEqualTo
+------				AND [IndividualId] >= @BusinessId
+------				)
+------			OR (
+------				@op6 = @Contains
+------				AND [IndividualId] LIKE '%' + @BusinessId + '%'
+------				)
+------			OR (
+------				@op6 = @DoesNotContain
+------				AND [IndividualId] NOT LIKE '%' + @BusinessId + '%'
+------				)
+------			OR (
+------				@op6 = @StartsWith
+------				AND [IndividualId] LIKE '' + @BusinessId + '%'
+------				)
+------			OR (
+------				@op6 = @EndsWith
+------				AND [IndividualId] LIKE '%' + @BusinessId + ''
+------				)
+------			)
+------	OPTION (RECOMPILE)
+------END
+------	IF(@IsCountryEnabledRecordConfig=0 OR (@IsCountryEnabledRecordConfig=1 AND @pdays = 'All'))
+------	BEGIN
+------	SELECT [ChangedDate]
+------		,IndividualId AS BusinessId
+------		,GPSUser AS [User]
+------		,[Type]
+------		,CurentState AS [State]
+------		,Comments
+------		,ReasonId
+------		,IsUpdateReasonAllowed
+------		,IsResendEmailAllowed
+------		,Summary
+------		,Comment
+------		,CommEventId
+------	FROM #EventHistoryTable
+------	WHERE (
+------			(@op1 IS NULL)
+------			OR (
+------				@op1 = @IsEqualTo
+------				AND GPSUser = @GPSUser
+------				)
+------			OR (
+------				@op1 = @IsNotEqualTo
+------				AND GPSUser <> @GPSUser
+------				)
+------			OR (
+------				@op1 = @IsLessThan
+------				AND GPSUser < @GPSUser
+------				)
+------			OR (
+------				@op1 = @IsLessThanOrEqualTo
+------				AND GPSUser <= @GPSUser
+------				)
+------			OR (
+------				@op1 = @IsGreaterThan
+------				AND GPSUser > @GPSUser
+------				)
+------			OR (
+------				@op1 = @IsGreaterThanOrEqualTo
+------				AND GPSUser >= @GPSUser
+------				)
+------			OR (
+------				@op1 = @Contains
+------				AND GPSUser LIKE '%' + @GPSUser + '%'
+------				)
+------			OR (
+------				@op1 = @DoesNotContain
+------				AND GPSUser NOT LIKE '%' + @GPSUser + '%'
+------				)
+------			OR (
+------				@op1 = @StartsWith
+------				AND GPSUser LIKE '' + @GPSUser + '%'
+------				)
+------			OR (
+------				@op1 = @EndsWith
+------				AND GPSUser LIKE '%' + @GPSUser + ''
+------				)
+------			)
+------		AND (
+------			(@op2 IS NULL)
+------			OR (
+------				@op2 = @IsEqualTo
+------				AND CurentState = @CurentState
+------				)
+------			OR (
+------				@op2 = @IsNotEqualTo
+------				AND CurentState <> @CurentState
+------				)
+------			OR (
+------				@op2 = @IsLessThan
+------				AND CurentState < @CurentState
+------				)
+------			OR (
+------				@op2 = @IsLessThanOrEqualTo
+------				AND CurentState <= @CurentState
+------				)
+------			OR (
+------				@op2 = @IsGreaterThan
+------				AND CurentState > @CurentState
+------				)
+------			OR (
+------				@op2 = @IsGreaterThanOrEqualTo
+------				AND CurentState >= @CurentState
+------				)
+------			OR (
+------				@op2 = @Contains
+------				AND CurentState LIKE '%' + @CurentState + '%'
+------				)
+------			OR (
+------				@op2 = @DoesNotContain
+------				AND CurentState NOT LIKE '%' + @CurentState + '%'
+------				)
+------			OR (
+------				@op2 = @StartsWith
+------				AND CurentState LIKE '' + @CurentState + '%'
+------				)
+------			OR (
+------				@op2 = @EndsWith
+------				AND CurentState LIKE '%' + @CurentState + ''
+------				)
+------			)
+------		AND (
+------			(@op3 IS NULL)
+------			OR (
+------				@op3 = @IsEqualTo
+------				AND Comments = @Comments
+------				)
+------			OR (
+------				@op3 = @IsNotEqualTo
+------				AND Comments <> @Comments
+------				)
+------			OR (
+------				@op3 = @IsLessThan
+------				AND Comments < @Comments
+------				)
+------			OR (
+------				@op3 = @IsLessThanOrEqualTo
+------				AND Comments <= @Comments
+------				)
+------			OR (
+------				@op3 = @IsGreaterThan
+------				AND Comments > @Comments
+------				)
+------			OR (
+------				@op3 = @IsGreaterThanOrEqualTo
+------				AND Comments >= @Comments
+------				)
+------			OR (
+------				@op3 = @Contains
+------				AND Comments LIKE '%' + @Comments + '%'
+------				)
+------			OR (
+------				@op3 = @DoesNotContain
+------				AND Comments NOT LIKE '%' + @Comments + '%'
+------				)
+------			OR (
+------				@op3 = @StartsWith
+------				AND Comments LIKE '' + @Comments + '%'
+------				)
+------			OR (
+------				@op3 = @EndsWith
+------				AND Comments LIKE '%' + @Comments + ''
+------				)
+------			)
+------		AND (
+------			(@op4 IS NULL)
+------			OR (
+------				@op4 = @IsEqualTo
+------				AND [Type] = @Type
+------				)
+------			OR (
+------				@op4 = @IsNotEqualTo
+------				AND [Type] <> @Type
+------				)
+------			OR (
+------				@op4 = @IsLessThan
+------				AND [Type] < @Type
+------				)
+------			OR (
+------				@op4 = @IsLessThanOrEqualTo
+------				AND [Type] <= @Type
+------				)
+------			OR (
+------				@op4 = @IsGreaterThan
+------				AND [Type] > @Type
+------				)
+------			OR (
+------				@op4 = @IsGreaterThanOrEqualTo
+------				AND [Type] >= @Type
+------				)
+------			OR (
+------				@op4 = @Contains
+------				AND [Type] LIKE '%' + @Type + '%'
+------				)
+------			OR (
+------				@op4 = @DoesNotContain
+------				AND [Type] NOT LIKE '%' + @Type + '%'
+------				)
+------			OR (
+------				@op4 = @StartsWith
+------				AND [Type] LIKE '' + @Type + '%'
+------				)
+------			OR (
+------				@op4 = @EndsWith
+------				AND [Type] LIKE '%' + @Type + ''
+------				)
+------			)
+------		AND (
+------			(@op5 IS NULL)
+------			OR (
+------				@op5 IS NULL
+------				AND @LogicalOperator5 IS NULL
+------				)
+------			OR (
+------				@LogicalOperator5 = 'OR'
+------				AND (
+------					(
+------						(
+------							@op5 = @IsEqualTo
+------							AND [ChangedDate] = @Date
+------							)
+------						OR (
+------							@op5 = @IsNotEqualTo
+------							AND [ChangedDate] <> @Date
+------							)
+------						OR (
+------							@op5 = @IsLessThan
+------							AND [ChangedDate] < @Date
+------							)
+------						OR (
+------							@op5 = @IsLessThanOrEqualTo
+------							AND [ChangedDate] <= @Date
+------							)
+------						OR (
+------							@op5 = @IsGreaterThan
+------							AND [ChangedDate] > @Date
+------							)
+------						OR (
+------							@op5 = @IsGreaterThanOrEqualTo
+------							AND [ChangedDate] >= @Date
+------							)
+------						OR (
+------							@op5 = @Contains
+------							AND [ChangedDate] LIKE '%' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @DoesNotContain
+------							AND [ChangedDate] NOT LIKE '%' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @StartsWith
+------							AND [ChangedDate] LIKE '' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @EndsWith
+------							AND [ChangedDate] LIKE '%' + @DateVarchar + ''
+------							)
+------						)
+------					OR (
+------						(
+------							@SecondOperator5 = @IsEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsNotEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsLessThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsLessThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsGreaterThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsGreaterThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @Contains
+------							AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @DoesNotContain
+------							AND [ChangedDate] NOT LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @StartsWith
+------							AND [ChangedDate] LIKE '' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @EndsWith
+------							AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + ''
+------							)
+------						)
+------					)
+------				)
+------			OR (
+------				@LogicalOperator5 = 'AND'
+------				AND (
+------					(
+------						(
+------							@op5 = @IsEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @Date
+------							)
+------						OR (
+------							@op5 = @IsNotEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @Date
+------							)
+------						OR (
+------							@op5 = @IsLessThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @Date
+------							)
+------						OR (
+------							@op5 = @IsLessThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @Date
+------							)
+------						OR (
+------							@op5 = @IsGreaterThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @Date
+------							)
+------						OR (
+------							@op5 = @IsGreaterThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @Date
+------							)
+------						OR (
+------							@op5 = @Contains
+------							AND [ChangedDate] LIKE '%' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @DoesNotContain
+------							AND [ChangedDate] NOT LIKE '%' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @StartsWith
+------							AND [ChangedDate] LIKE '' + @DateVarchar + '%'
+------							)
+------						OR (
+------							@op5 = @EndsWith
+------							AND [ChangedDate] LIKE '%' + @DateVarchar + ''
+------							)
+------						)
+------					AND (
+------						(
+------							@SecondOperator5 = @IsEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsNotEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsLessThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsLessThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsGreaterThan
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @IsGreaterThanOrEqualTo
+------							AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @SecondOpCreationDate5
+------							)
+------						OR (
+------							@SecondOperator5 = @Contains
+------							AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @DoesNotContain
+------							AND [ChangedDate] NOT LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @StartsWith
+------							AND [ChangedDate] LIKE '' + @SecondOpCreationDate5Varchar + '%'
+------							)
+------						OR (
+------							@SecondOperator5 = @EndsWith
+------							AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + ''
+------							)
+------						)
+------					)
+------				)
+------			OR (
+------				@op5 = @IsEqualTo
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @Date
+------				)
+------			OR (
+------				@op5 = @IsNotEqualTo
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @Date
+------				)
+------			OR (
+------				@op5 = @IsLessThan
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @Date
+------				)
+------			OR (
+------				@op5 = @IsLessThanOrEqualTo
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @Date
+------				)
+------			OR (
+------				@op5 = @IsGreaterThan
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @Date
+------				)
+------			OR (
+------				@op5 = @IsGreaterThanOrEqualTo
+------				AND @SecondOperator5 IS NULL
+------				AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @Date
+------				)
+------			OR (
+------				@op5 = @Contains
+------				AND @SecondOperator5 IS NULL
+------				AND [ChangedDate] LIKE '%' + @DateVarchar + '%'
+------				)
+------			OR (
+------				@op5 = @DoesNotContain
+------				AND @SecondOperator5 IS NULL
+------				AND [ChangedDate] NOT LIKE '%' + @DateVarchar + '%'
+------				)
+------			OR (
+------				@op5 = @StartsWith
+------				AND @SecondOperator5 IS NULL
+------				AND [ChangedDate] LIKE '' + @DateVarchar + '%'
+------				)
+------			OR (
+------				@op5 = @EndsWith
+------				AND @SecondOperator5 IS NULL
+------				AND [ChangedDate] LIKE '%' + @DateVarchar + ''
+------				)
+------			)
+------		AND (
+------			(@op6 IS NULL)
+------			OR (
+------				@op6 = @IsEqualTo
+------				AND [IndividualId] = @BusinessId
+------				)
+------			OR (
+------				@op6 = @IsNotEqualTo
+------				AND [IndividualId] <> @BusinessId
+------				)
+------			OR (
+------				@op6 = @IsLessThan
+------				AND [IndividualId] < @BusinessId
+------				)
+------			OR (
+------				@op6 = @IsLessThanOrEqualTo
+------				AND [IndividualId] <= @BusinessId
+------				)
+------			OR (
+------				@op6 = @IsGreaterThan
+------				AND [IndividualId] > @BusinessId
+------				)
+------			OR (
+------				@op6 = @IsGreaterThanOrEqualTo
+------				AND [IndividualId] >= @BusinessId
+------				)
+------			OR (
+------				@op6 = @Contains
+------				AND [IndividualId] LIKE '%' + @BusinessId + '%'
+------				)
+------			OR (
+------				@op6 = @DoesNotContain
+------				AND [IndividualId] NOT LIKE '%' + @BusinessId + '%'
+------				)
+------			OR (
+------				@op6 = @StartsWith
+------				AND [IndividualId] LIKE '' + @BusinessId + '%'
+------				)
+------			OR (
+------				@op6 = @EndsWith
+------				AND [IndividualId] LIKE '%' + @BusinessId + ''
+------				)
+------			)
+------	ORDER BY CASE 
+------			WHEN @pOrderBy = 'User'
+------				AND @pOrderType = 'ASC'
+------				THEN GPSUser
+------			END ASC
+------		,CASE 
+------			WHEN @pOrderBy = 'User'
+------				AND @pOrderType = 'DESC'
+------				THEN GPSUser
+------			END DESC
+------		,CASE 
+------			WHEN @pOrderBy = 'State'
+------				AND @pOrderType = 'ASC'
+------				THEN CurentState
+------			END ASC
+------		,CASE 
+------			WHEN @pOrderBy = 'State'
+------				AND @pOrderType = 'DESC'
+------				THEN CurentState
+------			END DESC
+------		,CASE 
+------			WHEN @pOrderBy = 'Comments'
+------				AND @pOrderType = 'ASC'
+------				THEN Comments
+------			END ASC
+------		,CASE 
+------			WHEN @pOrderBy = 'Comments'
+------				AND @pOrderType = 'DESC'
+------				THEN Comments
+------			END DESC
+------		,CASE 
+------			WHEN @pOrderBy = 'Type'
+------				AND @pOrderType = 'ASC'
+------				THEN [Type]
+------			END ASC
+------		,CASE 
+------			WHEN @pOrderBy = 'Type'
+------				AND @pOrderType = 'DESC'
+------				THEN [Type]
+------			END DESC
+------		,CASE 
+------			WHEN @pOrderBy = 'ChangedDate'
+------				AND @pOrderType = 'ASC'
+------				THEN [ChangedDate]
+------			END ASC
+------		,CASE 
+------			WHEN @pOrderBy = 'ChangedDate'
+------				AND @pOrderType = 'DESC'
+------				THEN [ChangedDate]
+------			END DESC OFFSET @OFFSETRows ROWS
+
+------	FETCH NEXT @pPageSize ROWS ONLY
+------	OPTION (RECOMPILE)
+------END
+------	ELSE
+------	BEGIN
+------	IF( @IsCountryEnabledRecordConfig=1)
+
+------BEGIN
+------	BEGIN
+------	 CREATE TABLE #EventHistoryTableForRecords ([ChangedDate] DATETIME
+------		,BusinessId NVARCHAR(256)
+------		,[User] VARCHAR(256)
+------		,[Type] VARCHAR(256)
+------		,Comments NVARCHAR(MAX)
+------		,[State] VARCHAR(256)
+------		,ReasonId UNIQUEIDENTIFIER NULL
+------		,IsUpdateReasonAllowed BIT NULL DEFAULT 0
+------		,IsResendEmailAllowed BIT NULL DEFAULT 0
+------		,Summary NVARCHAR(MAX) NULL DEFAULT ''
+------		,Comment NVARCHAR(MAX) NULL DEFAULT ''
+------		,CommEventId UNIQUEIDENTIFIER NULL
+------		)
+------		END
+------	BEGIN
+------		INSERT INTO #EventHistoryTableForRecords (
+------	[ChangedDate]
+------	,BusinessId
+------	,[User]
+------	,[Type]
+------	,Comments
+------	,[State]
+------	,ReasonId
+------	,IsUpdateReasonAllowed
+------	,IsResendEmailAllowed
+------	,Summary
+------	,Comment
+------	,CommEventId
+------	)
+------SELECT [ChangedDate]
+------	,IndividualId AS BusinessId
+------	,GPSUser AS [User]
+------	,[Type]
+------	,Comments
+------	,CurentState AS [State]
+------	,ReasonId
+------	,IsUpdateReasonAllowed
+------	,IsResendEmailAllowed
+------	,Summary
+------	,Comment
+------	,CommEventId
+------FROM #EventHistoryTable
+------WHERE (
+------		(@op1 IS NULL)
+------		OR (
+------			@op1 = @IsEqualTo
+------			AND GPSUser = @GPSUser
+------			)
+------		OR (
+------			@op1 = @IsNotEqualTo
+------			AND GPSUser <> @GPSUser
+------			)
+------		OR (
+------			@op1 = @IsLessThan
+------			AND GPSUser < @GPSUser
+------			)
+------		OR (
+------			@op1 = @IsLessThanOrEqualTo
+------			AND GPSUser <= @GPSUser
+------			)
+------		OR (
+------			@op1 = @IsGreaterThan
+------			AND GPSUser > @GPSUser
+------			)
+------		OR (
+------			@op1 = @IsGreaterThanOrEqualTo
+------			AND GPSUser >= @GPSUser
+------			)
+------		OR (
+------			@op1 = @Contains
+------			AND GPSUser LIKE '%' + @GPSUser + '%'
+------			)
+------		OR (
+------			@op1 = @DoesNotContain
+------			AND GPSUser NOT LIKE '%' + @GPSUser + '%'
+------			)
+------		OR (
+------			@op1 = @StartsWith
+------			AND GPSUser LIKE '' + @GPSUser + '%'
+------			)
+------		OR (
+------			@op1 = @EndsWith
+------			AND GPSUser LIKE '%' + @GPSUser + ''
+------			)
+------		)
+------	AND (
+------		(@op2 IS NULL)
+------		OR (
+------			@op2 = @IsEqualTo
+------			AND CurentState = @CurentState
+------			)
+------		OR (
+------			@op2 = @IsNotEqualTo
+------			AND CurentState <> @CurentState
+------			)
+------		OR (
+------			@op2 = @IsLessThan
+------			AND CurentState < @CurentState
+------			)
+------		OR (
+------			@op2 = @IsLessThanOrEqualTo
+------			AND CurentState <= @CurentState
+------			)
+------		OR (
+------			@op2 = @IsGreaterThan
+------			AND CurentState > @CurentState
+------			)
+------		OR (
+------			@op2 = @IsGreaterThanOrEqualTo
+------			AND CurentState >= @CurentState
+------			)
+------		OR (
+------			@op2 = @Contains
+------			AND CurentState LIKE '%' + @CurentState + '%'
+------			)
+------		OR (
+------			@op2 = @DoesNotContain
+------			AND CurentState NOT LIKE '%' + @CurentState + '%'
+------			)
+------		OR (
+------			@op2 = @StartsWith
+------			AND CurentState LIKE '' + @CurentState + '%'
+------			)
+------		OR (
+------			@op2 = @EndsWith
+------			AND CurentState LIKE '%' + @CurentState + ''
+------			)
+------		)
+------	AND (
+------		(@op3 IS NULL)
+------		OR (
+------			@op3 = @IsEqualTo
+------			AND Comments = @Comments
+------			)
+------		OR (
+------			@op3 = @IsNotEqualTo
+------			AND Comments <> @Comments
+------			)
+------		OR (
+------			@op3 = @IsLessThan
+------			AND Comments < @Comments
+------			)
+------		OR (
+------			@op3 = @IsLessThanOrEqualTo
+------			AND Comments <= @Comments
+------			)
+------		OR (
+------			@op3 = @IsGreaterThan
+------			AND Comments > @Comments
+------			)
+------		OR (
+------			@op3 = @IsGreaterThanOrEqualTo
+------			AND Comments >= @Comments
+------			)
+------		OR (
+------			@op3 = @Contains
+------			AND Comments LIKE '%' + @Comments + '%'
+------			)
+------		OR (
+------			@op3 = @DoesNotContain
+------			AND Comments NOT LIKE '%' + @Comments + '%'
+------			)
+------		OR (
+------			@op3 = @StartsWith
+------			AND Comments LIKE '' + @Comments + '%'
+------			)
+------		OR (
+------			@op3 = @EndsWith
+------			AND Comments LIKE '%' + @Comments + ''
+------			)
+------		)
+------	AND (
+------		(@op4 IS NULL)
+------		OR (
+------			@op4 = @IsEqualTo
+------			AND [Type] = @Type
+------			)
+------		OR (
+------			@op4 = @IsNotEqualTo
+------			AND [Type] <> @Type
+------			)
+------		OR (
+------			@op4 = @IsLessThan
+------			AND [Type] < @Type
+------			)
+------		OR (
+------			@op4 = @IsLessThanOrEqualTo
+------			AND [Type] <= @Type
+------			)
+------		OR (
+------			@op4 = @IsGreaterThan
+------			AND [Type] > @Type
+------			)
+------		OR (
+------			@op4 = @IsGreaterThanOrEqualTo
+------			AND [Type] >= @Type
+------			)
+------		OR (
+------			@op4 = @Contains
+------			AND [Type] LIKE '%' + @Type + '%'
+------			)
+------		OR (
+------			@op4 = @DoesNotContain
+------			AND [Type] NOT LIKE '%' + @Type + '%'
+------			)
+------		OR (
+------			@op4 = @StartsWith
+------			AND [Type] LIKE '' + @Type + '%'
+------			)
+------		OR (
+------			@op4 = @EndsWith
+------			AND [Type] LIKE '%' + @Type + ''
+------			)
+------		)
+------	AND (
+------		(@op5 IS NULL)
+------		OR (
+------			@op5 IS NULL
+------			AND @LogicalOperator5 IS NULL
+------			)
+------		OR (
+------			@LogicalOperator5 = 'OR'
+------			AND (
+------				(
+------					(
+------						@op5 = @IsEqualTo
+------						AND [ChangedDate] = @Date
+------						)
+------					OR (
+------						@op5 = @IsNotEqualTo
+------						AND [ChangedDate] <> @Date
+------						)
+------					OR (
+------						@op5 = @IsLessThan
+------						AND [ChangedDate] < @Date
+------						)
+------					OR (
+------						@op5 = @IsLessThanOrEqualTo
+------						AND [ChangedDate] <= @Date
+------						)
+------					OR (
+------						@op5 = @IsGreaterThan
+------						AND [ChangedDate] > @Date
+------						)
+------					OR (
+------						@op5 = @IsGreaterThanOrEqualTo
+------						AND [ChangedDate] >= @Date
+------						)
+------					OR (
+------						@op5 = @Contains
+------						AND [ChangedDate] LIKE '%' + @DateVarchar + '%'
+------						)
+------					OR (
+------						@op5 = @DoesNotContain
+------						AND [ChangedDate] NOT LIKE '%' + @DateVarchar + '%'
+------						)
+------					OR (
+------						@op5 = @StartsWith
+------						AND [ChangedDate] LIKE '' + @DateVarchar + '%'
+------						)
+------					OR (
+------						@op5 = @EndsWith
+------						AND [ChangedDate] LIKE '%' + @DateVarchar + ''
+------						)
+------					)
+------				OR (
+------					(
+------						@SecondOperator5 = @IsEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @IsNotEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @IsLessThan
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @IsLessThanOrEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @IsGreaterThan
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @IsGreaterThanOrEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @Contains
+------						AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------						)
+------					OR (
+------						@SecondOperator5 = @DoesNotContain
+------						AND [ChangedDate] NOT LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------						)
+------					OR (
+------						@SecondOperator5 = @StartsWith
+------						AND [ChangedDate] LIKE '' + @SecondOpCreationDate5Varchar + '%'
+------						)
+------					OR (
+------						@SecondOperator5 = @EndsWith
+------						AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + ''
+------						)
+------					)
+------				)
+------			)
+------		OR (
+------			@LogicalOperator5 = 'AND'
+------			AND (
+------				(
+------					(
+------						@op5 = @IsEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @Date
+------						)
+------					OR (
+------						@op5 = @IsNotEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @Date
+------						)
+------					OR (
+------						@op5 = @IsLessThan
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @Date
+------						)
+------					OR (
+------						@op5 = @IsLessThanOrEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @Date
+------						)
+------					OR (
+------						@op5 = @IsGreaterThan
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @Date
+------						)
+------					OR (
+------						@op5 = @IsGreaterThanOrEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @Date
+------						)
+------					OR (
+------						@op5 = @Contains
+------						AND [ChangedDate] LIKE '%' + @DateVarchar + '%'
+------						)
+------					OR (
+------						@op5 = @DoesNotContain
+------						AND [ChangedDate] NOT LIKE '%' + @DateVarchar + '%'
+------						)
+------					OR (
+------						@op5 = @StartsWith
+------						AND [ChangedDate] LIKE '' + @DateVarchar + '%'
+------						)
+------					OR (
+------						@op5 = @EndsWith
+------						AND [ChangedDate] LIKE '%' + @DateVarchar + ''
+------						)
+------					)
+------				AND (
+------					(
+------						@SecondOperator5 = @IsEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @IsNotEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @IsLessThan
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @IsLessThanOrEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @IsGreaterThan
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @IsGreaterThanOrEqualTo
+------						AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @SecondOpCreationDate5
+------						)
+------					OR (
+------						@SecondOperator5 = @Contains
+------						AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------						)
+------					OR (
+------						@SecondOperator5 = @DoesNotContain
+------						AND [ChangedDate] NOT LIKE '%' + @SecondOpCreationDate5Varchar + '%'
+------						)
+------					OR (
+------						@SecondOperator5 = @StartsWith
+------						AND [ChangedDate] LIKE '' + @SecondOpCreationDate5Varchar + '%'
+------						)
+------					OR (
+------						@SecondOperator5 = @EndsWith
+------						AND [ChangedDate] LIKE '%' + @SecondOpCreationDate5Varchar + ''
+------						)
+------					)
+------				)
+------			)
+------		OR (
+------			@op5 = @IsEqualTo
+------			AND @SecondOperator5 IS NULL
+------			AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) = @Date
+------			)
+------		OR (
+------			@op5 = @IsNotEqualTo
+------			AND @SecondOperator5 IS NULL
+------			AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <> @Date
+------			)
+------		OR (
+------			@op5 = @IsLessThan
+------			AND @SecondOperator5 IS NULL
+------			AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) < @Date
+------			)
+------		OR (
+------			@op5 = @IsLessThanOrEqualTo
+------			AND @SecondOperator5 IS NULL
+------			AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) <= @Date
+------			)
+------		OR (
+------			@op5 = @IsGreaterThan
+------			AND @SecondOperator5 IS NULL
+------			AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) > @Date
+------			)
+------		OR (
+------			@op5 = @IsGreaterThanOrEqualTo
+------			AND @SecondOperator5 IS NULL
+------			AND DATEADD(mi, DATEDIFF(mi, 0, [ChangedDate]), 0) >= @Date
+------			)
+------		OR (
+------			@op5 = @Contains
+------			AND @SecondOperator5 IS NULL
+------			AND [ChangedDate] LIKE '%' + @DateVarchar + '%'
+------			)
+------		OR (
+------			@op5 = @DoesNotContain
+------			AND @SecondOperator5 IS NULL
+------			AND [ChangedDate] NOT LIKE '%' + @DateVarchar + '%'
+------			)
+------		OR (
+------			@op5 = @StartsWith
+------			AND @SecondOperator5 IS NULL
+------			AND [ChangedDate] LIKE '' + @DateVarchar + '%'
+------			)
+------		OR (
+------			@op5 = @EndsWith
+------			AND @SecondOperator5 IS NULL
+------			AND [ChangedDate] LIKE '%' + @DateVarchar + ''
+------			)
+------		)
+------	AND (
+------		(@op6 IS NULL)
+------		OR (
+------			@op6 = @IsEqualTo
+------			AND [IndividualId] = @BusinessId
+------			)
+------		OR (
+------			@op6 = @IsNotEqualTo
+------			AND [IndividualId] <> @BusinessId
+------			)
+------		OR (
+------			@op6 = @IsLessThan
+------			AND [IndividualId] < @BusinessId
+------			)
+------		OR (
+------			@op6 = @IsLessThanOrEqualTo
+------			AND [IndividualId] <= @BusinessId
+------			)
+------		OR (
+------			@op6 = @IsGreaterThan
+------			AND [IndividualId] > @BusinessId
+------			)
+------		OR (
+------			@op6 = @IsGreaterThanOrEqualTo
+------			AND [IndividualId] >= @BusinessId
+------			)
+------		OR (
+------			@op6 = @Contains
+------			AND [IndividualId] LIKE '%' + @BusinessId + '%'
+------			)
+------		OR (
+------			@op6 = @DoesNotContain
+------			AND [IndividualId] NOT LIKE '%' + @BusinessId + '%'
+------			)
+------		OR (
+------			@op6 = @StartsWith
+------			AND [IndividualId] LIKE '' + @BusinessId + '%'
+------			)
+------		OR (
+------			@op6 = @EndsWith
+------			AND [IndividualId] LIKE '%' + @BusinessId + ''
+------			)
+------		)
+------ORDER BY CASE 
+------		WHEN @pOrderBy = 'User'
+------			AND @pOrderType = 'ASC'
+------			THEN GPSUser
+------		END ASC
+------	,CASE 
+------		WHEN @pOrderBy = 'User'
+------			AND @pOrderType = 'DESC'
+------			THEN GPSUser
+------		END DESC
+------	,CASE 
+------		WHEN @pOrderBy = 'State'
+------			AND @pOrderType = 'ASC'
+------			THEN CurentState
+------		END ASC
+------	,CASE 
+------		WHEN @pOrderBy = 'State'
+------			AND @pOrderType = 'DESC'
+------			THEN CurentState
+------		END DESC
+------	,CASE 
+------		WHEN @pOrderBy = 'Comments'
+------			AND @pOrderType = 'ASC'
+------			THEN Comments
+------		END ASC
+------	,CASE 
+------		WHEN @pOrderBy = 'Comments'
+------			AND @pOrderType = 'DESC'
+------			THEN Comments
+------		END DESC
+------	,CASE 
+------		WHEN @pOrderBy = 'Type'
+------			AND @pOrderType = 'ASC'
+------			THEN [Type]
+------		END ASC
+------	,CASE 
+------		WHEN @pOrderBy = 'Type'
+------			AND @pOrderType = 'DESC'
+------			THEN [Type]
+------		END DESC
+------	,CASE 
+------		WHEN @pOrderBy = 'ChangedDate'
+------			AND @pOrderType = 'ASC'
+------			THEN [ChangedDate]
+------		END ASC
+------	,CASE 
+------		WHEN @pOrderBy = 'ChangedDate'
+------			AND @pOrderType = 'DESC'
+------			THEN [ChangedDate]
+------		END DESC OFFSET @OFFSETRows ROWS
+
+------FETCH NEXT @pPageSize ROWS ONLY
+------OPTION (RECOMPILE) END
+------	/*Condition to get the results in  the records format applicable for 'France'*/
+------	END
+
+------/*IF (@pdays = 'default')
+
+
+
+------BEGIN
+
+------	SELECT TOP 10 *
+
+------	FROM #EventHistoryTableForRecords
+
+------END*/
+------IF (@pdays = '30')
+------BEGIN
+------	select 30
+	
+------	SELECT TOP 30 *
+------	FROM #EventHistoryTableForRecords
+------	ORDER BY ChangedDate DESC
+------END
+
+------IF (
+------		@pdays = '10'
+------		OR @pdays = 'default'
+------		)
+------BEGIN
+------	select 10
+
+------	SELECT TOP 10 *
+------	FROM #EventHistoryTableForRecords
+------	ORDER BY ChangedDate DESC
+------END
+------	END END

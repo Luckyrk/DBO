@@ -1,0 +1,30 @@
+﻿CREATE TABLE [dbo].[Interviewer] (
+    [ID]                 UNIQUEIDENTIFIER DEFAULT (newid()) NOT NULL,
+    [InterviewerCode]    BIGINT           NULL,
+    [Name]               NVARCHAR (255)   NOT NULL,
+    [StartDate]          DATETIME         NOT NULL,
+    [EndDate]            DATETIME         NULL,
+    [Contract]           INT              NOT NULL,
+    [Type]               NVARCHAR (20)    NOT NULL,
+    [AddressLine1]       NVARCHAR (100)   NULL,
+    [AddressLine2]       NVARCHAR (100)   NULL,
+    [AddressLine3]       NVARCHAR (100)   NULL,
+    [AddressLine4]       NVARCHAR (100)   NULL,
+    [PostCode]           NVARCHAR (50)    NULL,
+    [HomePhone]          NVARCHAR (100)   NULL,
+    [MobilePhone]        NVARCHAR (100)   NULL,
+    [OtherPhone]         NVARCHAR (100)   NULL,
+    [EmailAddress]       NVARCHAR (100)   NULL,
+    [DevicePhone]        NVARCHAR (100)   NULL,
+    [Document]           NVARCHAR (50)    NULL,
+    [CityId]             INT              NULL,
+    [Comments]           NVARCHAR (MAX)   NULL,
+    [GPSUser]            NVARCHAR (50)    NOT NULL,
+    [GPSUpdateTimestamp] DATETIME         NOT NULL,
+    [CreationTimeStamp]  DATETIME         NULL,
+    [Country_Id]         UNIQUEIDENTIFIER NULL,
+    [Supervisor_id]      UNIQUEIDENTIFIER NULL,
+	CONSTRAINT [PK_dbo.Interviewer] PRIMARY KEY CLUSTERED ([Id] ASC)
+);
+GO
+

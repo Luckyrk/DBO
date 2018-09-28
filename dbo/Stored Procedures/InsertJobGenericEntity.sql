@@ -1,0 +1,17 @@
+﻿
+CREATE PROCEDURE [dbo].[InsertJobGenericEntity] 
+	 @pJobId BIGINT
+	,@pCountryISO2A VARCHAR(2)
+	,@pSQLSTRING NVARCHAR(MAX)
+AS
+BEGIN
+
+	DELETE FROM GenericEntity WHERE JobId = @pJobId
+
+	DECLARE @SQLSTRING NVARCHAR(MAX) = '';
+
+	SET @SQLSTRING = @pSQLSTRING
+
+	EXEC (@SQLSTRING)
+	
+END

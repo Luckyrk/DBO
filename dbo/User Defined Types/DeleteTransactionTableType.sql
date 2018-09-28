@@ -1,0 +1,1 @@
+﻿CREATE TYPE dbo.TransactionType AS TABLE (TransactionId uniqueidentifier)

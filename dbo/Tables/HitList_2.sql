@@ -1,0 +1,18 @@
+﻿CREATE TABLE [dbo].[HitList] (
+    [PERIOD]           NUMERIC (6)    NOT NULL,
+    [HOUSEHOLD_NUMBER] NUMERIC (7)    NOT NULL,
+    [TYPE]             NVARCHAR (1)   NOT NULL,
+    [REASON]           NVARCHAR (120) NOT NULL,
+    [SPEND_1]          FLOAT (53)     NOT NULL,
+    [SPEND_2]          FLOAT (53)     NOT NULL,
+    [SPEND_3]          FLOAT (53)     NOT NULL,
+    [HOUSEHOLD_SIZE]   INT            NOT NULL,
+    [ELIGCODE_1]       NUMERIC (1)    NOT NULL,
+    [ELIGCODE_2]       NUMERIC (1)    NOT NULL,
+    [ELIGCODE_3]       NUMERIC (1)    NOT NULL,
+	[GPSUser] NVARCHAR(100) NOT NULL DEFAULT 'DefaultGPSUser',
+	[GPSUpdateTimestamp] DATETIME NOT NULL  DEFAULT '01/01/2012',
+	[CreationTimeStamp] DATETIME NOT NULL  DEFAULT '01/01/2012',
+    PRIMARY KEY CLUSTERED ([PERIOD] ASC, [HOUSEHOLD_NUMBER] ASC)
+);
+
